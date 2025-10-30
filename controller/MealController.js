@@ -7,6 +7,8 @@ var bryctjs = require("bcryptjs");
 var jwt = require("jsonwebtoken");
 const { cacheGet, cacheSet, cacheDel } = require("../services/redis");
 const crypto = require("crypto");
+const Payment = require("../model/payment");
+const User = require("../model/user");
 const {
   createPagination,
   createPaginatedResponse,
@@ -63,6 +65,7 @@ exports.createMeal = async (req, res) => {
             category, // Category ObjectId string
             subCategory, // SubCategory ObjectId string
             dietType, // enum string
+            totalKcal,
             tag,
             mealTime,
         } = req.body;
@@ -108,6 +111,7 @@ exports.createMeal = async (req, res) => {
             category: categoryId,
             subCategory: subCategoryId,
             dietType,
+            totalKcal,
             tag,
             mealTime,
         });
@@ -143,6 +147,7 @@ exports.updateMeal = async (req, res) => {
         if (update.ingredients) update.ingredients = await mapMaybe(update.ingredients, Ingredient);
         if (update.category) update.category = await mapMaybe(update.category, Category);
         if (update.subCategory) update.subCategory = await mapMaybe(update.subCategory, SubCategory);
+        if (update.totalKcal) update.totalKcal = update.totalKcal;
         // validate dietType nếu client gửi
         if (update.dietType) {
             const allowedDietTypes = [
@@ -179,5 +184,159 @@ exports.deleteMeal = async (req, res) => {
         return res.status(200).json({ message: "Meal deleted successfully", error: false, success: true, data: meal });
     } catch (error) {
         return res.status(500).json({ message: error.message || error, error: true, success: false });
+    }
+}
+
+// Kiểm tra user có premium còn hạn không
+async function isPremiumActive(userId) {
+    const now = new Date();
+    // Ưu tiên Payment còn hạn
+    const paid = await Payment.findOne({ user_id: userId, status: "paid", expiredAt: { $gt: now } })
+        .sort({ expiredAt: -1 })
+        .lean();
+    if (paid) return true;
+    // Fallback: dựa vào field trên User để test nhanh
+    const u = await User.findById(userId).select("premiumMembership premiumMembershipExpires").lean();
+    if (u?.premiumMembership && u?.premiumMembershipExpires && new Date(u.premiumMembershipExpires) > now) return true;
+    return false;
+}
+
+// Tính BMI, BMR, TDEE và đề xuất khẩu phần + món ăn theo mục tiêu
+exports.recommendMealsByBMI = async (req, res) => {
+    try {
+        const userId = req._id?.toString();
+        if (!userId) return res.status(401).json({ message: "Chưa đăng nhập", success: false });
+
+        const premium = await isPremiumActive(userId);
+        if (!premium) {
+            return res.status(402).json({ message: "Tính năng Premium: gói đã hết hạn hoặc chưa kích hoạt", success: false });
+        }
+
+        let { heightCm, weightKg, activityLevel, goal } = req.body || {};
+
+        // Luôn lấy giới tính và ngày sinh từ hồ sơ user
+        const profile = await User.findById(userId).lean();
+        const gender = profile?.gender;
+        const birthDate = profile?.birthDate;
+        if (!heightCm || !weightKg) {
+            return res.status(400).json({ message: "Thiếu chiều cao hoặc cân nặng", success: false });
+        }
+
+        // Tính tuổi
+        let age;
+        if (birthDate) {
+            const today = new Date();
+            const dob = new Date(birthDate);
+            age = today.getFullYear() - dob.getFullYear();
+            const m = today.getMonth() - dob.getMonth();
+            if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+        }
+        if (!age || age < 13 || age > 120) age = 25; // fallback an toàn
+
+        // Chuẩn hoá lựa chọn activityLevel và goal (chỉ 3 lựa chọn)
+        const normalize = (s) =>
+            (s || "")
+                .toString()
+                .trim()
+                .toLowerCase()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "");
+
+        const lv = normalize(activityLevel);
+        // Chấp nhận: "it van dong", "van dong vua phai", "van dong nhieu"; đồng thời hỗ trợ các key cũ
+        let factor;
+        if (lv === "it van dong" || lv === "sedentary") factor = 1.2;
+        else if (lv === "van dong vua phai" || lv === "moderate") factor = 1.55;
+        else if (lv === "van dong nhieu" || lv === "active") factor = 1.725;
+        else if (lv === "light") factor = 1.375; // tương thích ngược nếu FE đang dùng
+        else {
+            return res.status(400).json({
+                success: false,
+                message: "activityLevel chỉ được phép: 'Ít vận động' | 'Vận động vừa phải' | 'Vận động nhiều'",
+            });
+        }
+
+        const g = normalize(goal);
+        if (![
+            "giam can",
+            "duy tri can nang",
+            "tang can",
+        ].includes(g)) {
+            return res.status(400).json({
+                success: false,
+                message: "goal chỉ được phép: 'Giảm cân' | 'Duy trì cân nặng' | 'Tăng cân'",
+            });
+        }
+
+        // BMI
+        const h = Number(heightCm) / 100;
+        const w = Number(weightKg);
+        if (!(h > 0) || !(w > 0)) {
+            return res.status(400).json({ message: "Giá trị chiều cao/cân nặng không hợp lệ", success: false });
+        }
+        const bmi = +(w / (h * h)).toFixed(1);
+        let bmiClass = "Normal";
+        if (bmi < 18.5) bmiClass = "Underweight";
+        else if (bmi < 25) bmiClass = "Normal";
+        else if (bmi < 30) bmiClass = "Overweight";
+        else bmiClass = "Obesity";
+
+        // BMR (Mifflin St Jeor)
+        const bmr = Math.round(10 * w + 6.25 * (heightCm) - 5 * age + (gender === "male" ? 5 : -161));
+
+        // Hệ số hoạt động (đã chuẩn hoá ở trên)
+        const tdee = Math.round(bmr * factor);
+
+        // Mục tiêu
+        const goalMapVi = { "giam can": -500, "duy tri can nang": 0, "tang can": 500 };
+        const delta = goalMapVi[g];
+        let calorieTarget = tdee + delta;
+        if (calorieTarget < 1200) calorieTarget = 1200; // sàn an toàn
+
+        // Phân bổ cho các bữa
+        const ratios = { breakfast: 0.2, lunch: 0.35, dinner: 0.35, dessert: 0.1 };
+        const breakdown = Object.fromEntries(
+            Object.entries(ratios).map(([k, r]) => [k, Math.round(calorieTarget * r)])
+        );
+
+        // Ánh xạ dietType theo mục tiêu
+        const dietByGoal = g === "giam can" ? "Giảm cân" : g === "tang can" ? "Tăng cân" : "Eat clean";
+
+        // Tìm món phù hợp từng bữa ±15% quanh mục tiêu bữa
+        const picks = {};
+        for (const [mealTime, kcal] of Object.entries(breakdown)) {
+            const minK = Math.round(kcal * 0.85);
+            const maxK = Math.round(kcal * 1.15);
+            // eslint-disable-next-line no-await-in-loop
+            const items = await Meal.find({
+                mealTime: mealTime,
+                dietType: dietByGoal,
+                totalKcal: { $gte: minK, $lte: maxK },
+            })
+                .sort({ rating: -1 })
+                .limit(5)
+                .select("name image totalKcal dietType mealTime category subCategory")
+                .populate({ path: "category", select: "name" })
+                .populate({ path: "subCategory", select: "name" })
+                .lean();
+            picks[mealTime] = items;
+        }
+
+        return res.status(200).json({
+            message: "Tạo kế hoạch bữa ăn cá nhân hoá thành công",
+            success: true,
+            data: {
+                bmi,
+                bmiClass,
+                bmr,
+                tdee,
+                calorieTarget,
+                breakdown,
+                dietType: dietByGoal,
+                meals: picks,
+            },
+        });
+    } catch (error) {
+        return res.status(500).json({ message: error.message || error, success: false });
     }
 }

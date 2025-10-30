@@ -44,6 +44,11 @@ exports.createPaymentLink = async (req, res) => {
         expiredAt: trialExpiredAt,
       };
       const payment = await new Payment(paymentData).save();
+      // Cập nhật quyền premium cho user (trial)
+      await User.findByIdAndUpdate(userId, {
+        premiumMembership: true,
+        premiumMembershipExpires: trialExpiredAt,
+      });
       return res.status(201).json({
         message: "Kích hoạt dùng thử thành công!",
         success: true,
@@ -68,8 +73,8 @@ exports.createPaymentLink = async (req, res) => {
       amount: finalAmount,
       description,
       items: [{ name: description, quantity: 1, price: finalAmount }],
-      returnUrl: `${process.env.BASE_URL}/api/payment/success?order_code=${order_code}`,
-      cancelUrl: `${process.env.BASE_URL}/api/payment/cancel?order_code=${order_code}`,
+      returnUrl: `${process.env.BACKEND_BASE_URL}/api/payment/success?order_code=${order_code}`,
+      cancelUrl: `${process.env.BACKEND_BASE_URL}/api/payment/cancel?order_code=${order_code}`,
     };
     const paymentLinkResponse = await payOS.paymentRequests.create(paymentDataForPayOS);
     const paymentData = {
@@ -148,6 +153,15 @@ exports.updatePaymentStatus = async (req, res) => {
       if (oldExpired < now) oldExpired = now;
       payment.expiredAt = new Date(oldExpired.getTime() + extraDays * 24 * 60 * 60 * 1000);
       payment.paid_at = now;
+      // Đồng bộ trạng thái premium vào User
+      const userUpdate = {
+        premiumMembership: true,
+        premiumMembershipExpires: payment.expiredAt,
+      };
+      if (payment.premium_package_type === "monthly") {
+        userUpdate.premiumMembershipType = "monthly";
+      }
+      await User.findByIdAndUpdate(payment.user_id, userUpdate);
     }
     await payment.save();
     console.log(`Đã cập nhật trạng thái: ${order_code} -> ${status}`);
@@ -182,9 +196,57 @@ exports.paymentSuccess = async (req, res) => {
     }
     // In log cho dev
     console.log(`Thanh toán thành công: ${order_code}`);
-    // Redirect về frontend (chỉnh link theo môi trường thực tế)
-    const frontendUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/payment/success?order_code=${order_code}`;
-    return res.redirect(frontendUrl);
+    // Nếu cấu hình FRONTEND_URL là một URL thực, cho phép redirect tới đó
+    const frontendUrl = process.env.FRONTEND_URL
+      ? `${process.env.FRONTEND_URL}/payment/success?order_code=${order_code}`
+      : null;
+
+    if (frontendUrl) {
+      return res.redirect(frontendUrl);
+    }
+
+    // Trả về một trang HTML nhẹ để user có thể đóng và app có thể bắt deep-link
+    const deepLink = process.env.APP_DEEPLINK
+      ? `${process.env.APP_DEEPLINK}://payment?status=success&order_code=${order_code}`
+      : null;
+
+    const html = `<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Thanh toán thành công</title>
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;margin:0;background:#f7fafc;color:#1a202c}
+      .wrap{max-width:560px;margin:10vh auto;padding:24px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 10px 20px rgba(0,0,0,.06)}
+      h1{font-size:22px;margin:0 0 12px}
+      .code{background:#f1f5f9;padding:8px 12px;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;display:inline-block}
+      .row{margin:12px 0}
+      .btn{display:inline-block;margin-top:16px;padding:10px 14px;background:#16a34a;color:#fff;text-decoration:none;border-radius:10px}
+      .btn-sec{background:#0ea5e9;margin-left:8px}
+      .hint{font-size:12px;color:#475569;margin-top:8px}
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Thanh toán thành công</h1>
+      <div class="row">Mã đơn hàng: <span class="code" id="oc">${order_code}</span></div>
+      <div class="row">Trạng thái: <span class="code">success</span></div>
+      ${deepLink ? `<a class="btn" href="${deepLink}" id="openApp">Mở ứng dụng</a>` : ''}
+      <a class="btn btn-sec" href="#" onclick="window.close();return false;">Đóng trang</a>
+      <div class="hint">Bạn có thể đóng cửa sổ này để quay lại ứng dụng.</div>
+    </div>
+    <script>
+      (function(){
+        var payload = { status: 'success', order_code: '${order_code}' };
+        try { window.opener && window.opener.postMessage(payload, '*'); } catch(e) {}
+        try { window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify(payload)); } catch(e) {}
+        ${deepLink ? "setTimeout(function(){ window.location.href='" + deepLink + "'; }, 300);" : ""}
+      })();
+    </script>
+  </body>
+</html>`;
+    return res.status(200).send(html);
   } catch (error) {
     console.error("Payment success error:", error);
     return res.status(500).json({ message: "Lỗi xử lý thanh toán thành công", error: error.message, success: false });
@@ -201,8 +263,55 @@ exports.paymentCancel = async (req, res) => {
       return res.status(400).json({ message: "Thiếu order_code", success: false });
     }
     console.log(`Thanh toán bị hủy: ${order_code}`);
-    const frontendUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/payment/cancel?order_code=${order_code}`;
-    return res.redirect(frontendUrl);
+    const frontendUrl = process.env.FRONTEND_URL
+      ? `${process.env.FRONTEND_URL}/payment/cancel?order_code=${order_code}`
+      : null;
+
+    if (frontendUrl) {
+      return res.redirect(frontendUrl);
+    }
+
+    const deepLink = process.env.APP_DEEPLINK
+      ? `${process.env.APP_DEEPLINK}://payment?status=cancel&order_code=${order_code}`
+      : null;
+
+    const html = `<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Thanh toán thất bại/hủy</title>
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;margin:0;background:#f7fafc;color:#1a202c}
+      .wrap{max-width:560px;margin:10vh auto;padding:24px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 10px 20px rgba(0,0,0,.06)}
+      h1{font-size:22px;margin:0 0 12px}
+      .code{background:#f1f5f9;padding:8px 12px;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;display:inline-block}
+      .row{margin:12px 0}
+      .btn{display:inline-block;margin-top:16px;padding:10px 14px;background:#dc2626;color:#fff;text-decoration:none;border-radius:10px}
+      .btn-sec{background:#0ea5e9;margin-left:8px}
+      .hint{font-size:12px;color:#475569;margin-top:8px}
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Thanh toán thất bại hoặc đã hủy</h1>
+      <div class="row">Mã đơn hàng: <span class="code">${order_code}</span></div>
+      <div class="row">Trạng thái: <span class="code">cancel</span></div>
+      ${deepLink ? `<a class=\"btn\" href=\"${deepLink}\" id=\"openApp\">Mở ứng dụng</a>` : ''}
+      <a class="btn btn-sec" href="#" onclick="window.close();return false;">Đóng trang</a>
+      <div class="hint">Bạn có thể đóng cửa sổ này để quay lại ứng dụng.</div>
+    </div>
+    <script>
+      (function(){
+        var payload = { status: 'cancel', order_code: '${order_code}' };
+        try { window.opener && window.opener.postMessage(payload, '*'); } catch(e) {}
+        try { window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify(payload)); } catch(e) {}
+        ${deepLink ? "setTimeout(function(){ window.location.href='" + deepLink + "'; }, 300);" : ""}
+      })();
+    </script>
+  </body>
+</html>`;
+    return res.status(200).send(html);
   } catch (error) {
     console.error("Payment cancel error:", error);
     return res.status(500).json({ message: "Lỗi xử lý hủy thanh toán", error: error.message, success: false });

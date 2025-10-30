@@ -18,6 +18,11 @@ router.post(
 );
 router.get("/success", payment.paymentSuccess);
 router.get("/cancel", payment.paymentCancel);
-router.get("/history", payment.getMyTransactions); // Lấy lịch sử giao dịch premium cho user
+router.get(
+  	"/history",
+  	auth.authMiddleWare,
+  	auth.requireRole("customer", "admin"),
+  	payment.getMyTransactions
+); // Lấy lịch sử giao dịch premium cho user
 
 module.exports = router;

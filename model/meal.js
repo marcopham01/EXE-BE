@@ -49,6 +49,10 @@ const mealSchema = new schema({
         required: true,
         index: true,
     },
+    totalKcal: {
+        type: Number,
+        required: true,
+    },
     tag: {
         type: [String],
         required: true,

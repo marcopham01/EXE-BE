@@ -78,7 +78,7 @@ const userSchema = new schema(
     },
     premiumMembershipType: {
       type: String,
-      enum: ["monthly", "yearly"],
+      enum: ["monthly"],
     },
   },
   { timestamps: true }

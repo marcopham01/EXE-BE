@@ -12,6 +12,12 @@ router.get("/getmealbyid/:id",
     auth.requireRole("admin","customer"),
     meal.getMealById);
 
+// Premium: khuyến nghị theo BMI
+router.post("/recommendation/bmi",
+    auth.authMiddleWare,
+    auth.requireRole("customer","admin"),
+    meal.recommendMealsByBMI);
+
 // Admin routes
 router.post("/createmeal",
     auth.authMiddleWare,
