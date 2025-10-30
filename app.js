@@ -19,6 +19,11 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Đăng ký các schema tham chiếu để mongoose biết khi populate
+require("./model/meal/ingredient");
+require("./model/meal/category");
+require("./model/meal/subCategory");
+
 app.use(
   cors({
     origin: "*", // Cho phép tất cả origins
