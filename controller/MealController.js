@@ -9,6 +9,7 @@ const { cacheGet, cacheSet, cacheDel } = require("../services/redis");
 const crypto = require("crypto");
 const Payment = require("../model/payment");
 const User = require("../model/user");
+const MealPlan = require("../model/mealPlan");
 const {
   createPagination,
   createPaginatedResponse,
@@ -237,24 +238,29 @@ exports.recommendMealsByBMI = async (req, res) => {
         const normalize = (s) =>
             (s || "")
                 .toString()
+                .replace(/\u00A0/g, " ") // chuyển NBSP -> space thường
                 .trim()
                 .toLowerCase()
                 .normalize("NFD")
-                .replace(/[\u0300-\u036f]/g, "");
+                .replace(/[\u0300-\u036f]/g, "") // bỏ dấu tiếng Việt
+                .replace(/[‘’'“”]/g, "") // bỏ ngoặc thông minh/nháy
+                .replace(/\s+/g, " "); // gom nhiều khoảng trắng về 1
 
         const lv = normalize(activityLevel);
-        // Chấp nhận: "it van dong", "van dong vua phai", "van dong nhieu"; đồng thời hỗ trợ các key cũ
-        let factor;
-        if (lv === "it van dong" || lv === "sedentary") factor = 1.2;
-        else if (lv === "van dong vua phai" || lv === "moderate") factor = 1.55;
-        else if (lv === "van dong nhieu" || lv === "active") factor = 1.725;
-        else if (lv === "light") factor = 1.375; // tương thích ngược nếu FE đang dùng
-        else {
+        // Chỉ cho phép đúng 3 lựa chọn tiếng Việt
+        const allowedLevels = {
+            "it van dong": { factor: 1.2, label: "Ít vận động" },
+            "van dong vua phai": { factor: 1.55, label: "Vận động vừa phải" },
+            "van dong nhieu": { factor: 1.725, label: "Vận động nhiều" },
+        };
+        const pickedLv = allowedLevels[lv];
+        if (!pickedLv) {
             return res.status(400).json({
                 success: false,
                 message: "activityLevel chỉ được phép: 'Ít vận động' | 'Vận động vừa phải' | 'Vận động nhiều'",
             });
         }
+        const factor = pickedLv.factor;
 
         const g = normalize(goal);
         if (![
@@ -322,10 +328,11 @@ exports.recommendMealsByBMI = async (req, res) => {
             picks[mealTime] = items;
         }
 
-        return res.status(200).json({
-            message: "Tạo kế hoạch bữa ăn cá nhân hoá thành công",
-            success: true,
-            data: {
+        // Lưu kế hoạch vào MealPlan
+        const planData = {
+            user_id: userId,
+            input: { heightCm, weightKg, activityLevel, goal },
+            result: {
                 bmi,
                 bmiClass,
                 bmr,
@@ -335,7 +342,59 @@ exports.recommendMealsByBMI = async (req, res) => {
                 dietType: dietByGoal,
                 meals: picks,
             },
+        };
+        try {
+            await MealPlan.create(planData);
+        } catch (e) {
+            // Không chặn response nếu lưu lịch sử lỗi
+        }
+
+        return res.status(200).json({
+            message: "Tạo kế hoạch bữa ăn cá nhân hoá thành công",
+            success: true,
+            data: planData.result,
         });
+    } catch (error) {
+        return res.status(500).json({ message: error.message || error, success: false });
+    }
+}
+
+// Lấy lịch sử kế hoạch của user (mới nhất trước)
+exports.getMealPlanHistory = async (req, res) => {
+    try {
+        const userId = req._id?.toString();
+        if (!userId) return res.status(401).json({ message: "Chưa đăng nhập", success: false });
+
+        const { page = 1, limit = 10 } = req.query;
+        const p = Math.max(1, parseInt(page, 10) || 1);
+        const l = Math.min(50, Math.max(1, parseInt(limit, 10) || 10));
+
+        const total = await MealPlan.countDocuments({ user_id: userId });
+        const items = await MealPlan.find({ user_id: userId })
+            .sort({ createdAt: -1 })
+            .skip((p - 1) * l)
+            .limit(l)
+            .lean();
+
+        return res.status(200).json({
+            success: true,
+            data: items,
+            pagination: { page: p, limit: l, total },
+        });
+    } catch (error) {
+        return res.status(500).json({ message: error.message || error, success: false });
+    }
+}
+
+// Lấy bản kế hoạch mới nhất
+exports.getLatestMealPlan = async (req, res) => {
+    try {
+        const userId = req._id?.toString();
+        if (!userId) return res.status(401).json({ message: "Chưa đăng nhập", success: false });
+
+        const latest = await MealPlan.findOne({ user_id: userId }).sort({ createdAt: -1 }).lean();
+        if (!latest) return res.status(404).json({ success: false, message: "Chưa có kế hoạch nào" });
+        return res.status(200).json({ success: true, data: latest });
     } catch (error) {
         return res.status(500).json({ message: error.message || error, success: false });
     }

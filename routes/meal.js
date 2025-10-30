@@ -18,6 +18,16 @@ router.post("/recommendation/bmi",
     auth.requireRole("customer","admin"),
     meal.recommendMealsByBMI);
 
+// Lịch sử và bản mới nhất
+router.get("/recommendation/history",
+    auth.authMiddleWare,
+    auth.requireRole("customer","admin"),
+    meal.getMealPlanHistory);
+router.get("/recommendation/latest",
+    auth.authMiddleWare,
+    auth.requireRole("customer","admin"),
+    meal.getLatestMealPlan);
+
 // Admin routes
 router.post("/createmeal",
     auth.authMiddleWare,

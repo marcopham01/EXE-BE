@@ -13,6 +13,38 @@ const payOS = new PayOS(
   process.env.PAYOS_CHECKSUM_KEY
 );
 
+// Helper: đánh dấu thanh toán thành công và nâng cấp user premium (đơn giản, idempotent)
+async function markPaidAndUpgrade(orderCode) {
+  const payment = await Payment.findOne({ order_code: parseInt(orderCode) });
+  if (!payment) return { ok: false, reason: "payment_not_found" };
+  // Nếu đã paid thì bỏ qua
+  if (payment.status === "paid") {
+    return { ok: true, already: true, payment };
+  }
+  payment.status = "paid";
+  const now = new Date();
+  // Tính hạn: monthly + 30 ngày (+3 ngày bonus như logic cũ)
+  let extraDays = 0;
+  if (payment.premium_package_type === "monthly") extraDays = 30 + 3;
+  if (payment.premium_package_type === "trial") extraDays = 3;
+  let base = payment.expiredAt || now;
+  if (base < now) base = now;
+  payment.expiredAt = new Date(base.getTime() + extraDays * 24 * 60 * 60 * 1000);
+  payment.paid_at = now;
+  await payment.save();
+
+  // Đồng bộ User tối giản
+  const userUpdate = {
+    premiumMembership: true,
+    premiumMembershipExpires: payment.expiredAt,
+  };
+  if (payment.premium_package_type === "monthly") {
+    userUpdate.premiumMembershipType = "monthly";
+  }
+  await User.findByIdAndUpdate(payment.user_id, userUpdate);
+  return { ok: true, payment };
+}
+
 /**
  * Tạo đơn thanh toán cho gói tháng hoặc dùng thử.
  * Chỉ cho phép 'monthly' và 'trial'.
@@ -196,6 +228,9 @@ exports.paymentSuccess = async (req, res) => {
     }
     // In log cho dev
     console.log(`Thanh toán thành công: ${order_code}`);
+    // Đánh dấu đơn đã thanh toán và nâng cấp user (đơn giản cho dự án môn học)
+    try { await markPaidAndUpgrade(order_code); } catch (e) { console.warn("Auto-upgrade failed:", e?.message); }
+
     // Nếu cấu hình FRONTEND_URL là một URL thực, cho phép redirect tới đó
     const frontendUrl = process.env.FRONTEND_URL
       ? `${process.env.FRONTEND_URL}/payment/success?order_code=${order_code}`
@@ -263,6 +298,15 @@ exports.paymentCancel = async (req, res) => {
       return res.status(400).json({ message: "Thiếu order_code", success: false });
     }
     console.log(`Thanh toán bị hủy: ${order_code}`);
+    // Cập nhật trạng thái thanh toán là cancelled (đơn giản)
+    try {
+      const payment = await Payment.findOne({ order_code: parseInt(order_code) });
+      if (payment && payment.status !== "paid") {
+        payment.status = "cancelled";
+        await payment.save();
+      }
+    } catch (e) { console.warn("Auto-cancel failed:", e?.message); }
+
     const frontendUrl = process.env.FRONTEND_URL
       ? `${process.env.FRONTEND_URL}/payment/cancel?order_code=${order_code}`
       : null;
