@@ -38,6 +38,31 @@ const userSchema = new schema(
       type: String,
       enum: ["male", "female"],
     },
+    birthDate: {
+      type: Date,
+      required: true,
+      validate: {
+        validator: function (value) {
+          if (!value) return false;
+          const today = new Date();
+          const dob = new Date(value);
+          if (isNaN(dob.getTime())) return false;
+          let age = today.getFullYear() - dob.getFullYear();
+          const m = today.getMonth() - dob.getMonth();
+          if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+            age--;
+          }
+          return age >= 13 && age <= 120;
+        },
+        message: "Tuổi phải từ 13 đến 120",
+      },
+    },
+    job: {
+      type: String,
+      required: true,
+      enum: ["Học sinh", "Sinh viên", "Đã đi làm"],
+      trim: true,
+    },
     resetToken: {
       type: String,
     },
@@ -58,5 +83,19 @@ const userSchema = new schema(
   },
   { timestamps: true }
 );
+
+// Tạo virtual age để lấy tuổi từ birthDate
+userSchema.virtual("age").get(function () {
+  if (!this.birthDate) return undefined;
+  const today = new Date();
+  const dob = new Date(this.birthDate);
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+    age--;
+  }
+  return age;
+});
+
 const user = mongoose.model("User", userSchema);
 module.exports = user;

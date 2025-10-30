@@ -12,34 +12,41 @@ const {
 
 exports.registerUser = async (req, res) => {
   try {
-    const { username, password, phoneNumber, email, fullName, gender } = req.body;
+    const { username, password, phoneNumber, email, fullName, gender, birthDate, job } = req.body;
 
+    // Kiểm tra trùng username
     const checkuserName = await User.findOne({ username }).lean();
     if (checkuserName) {
-      return res.status(400).json({
-        message: "Please Create New UserName",
-        success: false,
-      });
+      return res.status(400).json({ message: "Please Create New UserName", success: false });
     }
+    // Kiểm tra trùng fullName
     const checkfullName = await User.findOne({ fullName }).lean();
     if (checkfullName) {
-      return res.status(400).json({
-        message: "Please Create New Full Name",
-        success: false,
-      });
+      return res.status(400).json({ message: "Please Create New Full Name", success: false });
+    }
+    // Validate tuổi 13-120 (trước khi lưu để báo lỗi rõ ràng cho client)
+    const dob = new Date(birthDate);
+    if (isNaN(dob.getTime())) {
+      return res.status(400).json({ message: "birthDate invalid", success: false });
+    }
+    const today = new Date();
+    let age = today.getFullYear() - dob.getFullYear();
+    const m = today.getMonth() - dob.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+    if (age < 13 || age > 120) {
+      return res.status(400).json({ message: "Tuổi phải từ 13 đến 120", success: false });
+    }
+
+    // Validate job theo enum trong model
+    const allowedJobs = ["Học sinh", "Sinh viên", "Đã đi làm"];
+    if (!allowedJobs.includes(job)) {
+      return res.status(400).json({ message: "job must be one of: Học sinh, Sinh viên, Đã đi làm", success: false });
     }
 
     const salt = await bryctjs.genSalt(10);
     const hashPassword = await bryctjs.hash(password, salt);
 
-    const payload = {
-      username,
-      password: hashPassword,
-      phoneNumber,
-      email,
-      fullName,
-      gender,
-    };
+    const payload = { username, password: hashPassword, phoneNumber, email, fullName, gender, birthDate: dob, job };
     const newUser = await new User(payload).save();
 
     // BUST CACHE sau khi ghi
@@ -56,14 +63,13 @@ exports.registerUser = async (req, res) => {
         email: newUser.email,
         fullname: newUser.fullName,
         gender: newUser.gender,
+        job: newUser.job,
+        birthDate: newUser.birthDate,
+        age: newUser.age,
       },
     });
   } catch (error) {
-    return res.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
+    return res.status(500).json({ message: error.message || error, error: true, success: false });
   }
 };
 
