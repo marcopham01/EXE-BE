@@ -15,34 +15,61 @@ const payOS = new PayOS(
 
 // Helper: đánh dấu thanh toán thành công và nâng cấp user premium (đơn giản, idempotent)
 async function markPaidAndUpgrade(orderCode) {
-  const payment = await Payment.findOne({ order_code: parseInt(orderCode) });
-  if (!payment) return { ok: false, reason: "payment_not_found" };
-  // Nếu đã paid thì bỏ qua
-  if (payment.status === "paid") {
-    return { ok: true, already: true, payment };
-  }
-  payment.status = "paid";
-  const now = new Date();
-  // Tính hạn: monthly + 30 ngày (+3 ngày bonus như logic cũ)
-  let extraDays = 0;
-  if (payment.premium_package_type === "monthly") extraDays = 30 + 3;
-  if (payment.premium_package_type === "trial") extraDays = 3;
-  let base = payment.expiredAt || now;
-  if (base < now) base = now;
-  payment.expiredAt = new Date(base.getTime() + extraDays * 24 * 60 * 60 * 1000);
-  payment.paid_at = now;
-  await payment.save();
+  const code = parseInt(orderCode);
+  const mongoose = require("mongoose");
+  const session = await mongoose.startSession().catch(() => null);
 
-  // Đồng bộ User tối giản
-  const userUpdate = {
-    premiumMembership: true,
-    premiumMembershipExpires: payment.expiredAt,
+  const execCore = async (sess) => {
+    const now = new Date();
+    // Lấy bản ghi và khóa logic bằng điều kiện status khác 'paid' để đảm bảo idempotent
+    const payment = await Payment.findOne({ order_code: code }).session(sess);
+    if (!payment) return { ok: false, reason: "payment_not_found" };
+    if (payment.status === "paid") return { ok: true, already: true, payment };
+
+    let extraDays = 0;
+    if (payment.premium_package_type === "monthly") extraDays = 30 + 3;
+    if (payment.premium_package_type === "trial") extraDays = 3;
+
+    let base = payment.expiredAt || now;
+    if (base < now) base = now;
+    const newExpiredAt = new Date(base.getTime() + extraDays * 24 * 60 * 60 * 1000);
+
+    // Cập nhật Payment trước
+    payment.status = "paid";
+    payment.expiredAt = newExpiredAt;
+    payment.paid_at = now;
+    await payment.save({ session: sess });
+
+    // Cập nhật User đồng bộ
+    const userUpdate = {
+      premiumMembership: true,
+      premiumMembershipExpires: newExpiredAt,
+    };
+    if (payment.premium_package_type === "monthly") {
+      userUpdate.premiumMembershipType = "monthly";
+    }
+    await User.findByIdAndUpdate(payment.user_id, userUpdate, { session: sess });
+
+    return { ok: true, payment };
   };
-  if (payment.premium_package_type === "monthly") {
-    userUpdate.premiumMembershipType = "monthly";
+
+  // Thử transaction; nếu Mongo không hỗ trợ (standalone), fallback chạy không session
+  if (session) {
+    try {
+      let result;
+      await session.withTransaction(async () => {
+        result = await execCore(session);
+      });
+      session.endSession();
+      return result;
+    } catch (e) {
+      try { session.endSession(); } catch (_) {}
+      console.warn("Transaction failed, fallback no-session:", e?.message);
+      return await execCore(null);
+    }
+  } else {
+    return await execCore(null);
   }
-  await User.findByIdAndUpdate(payment.user_id, userUpdate);
-  return { ok: true, payment };
 }
 
 /**
@@ -397,5 +424,37 @@ exports.getMyTransactions = async (req, res) => {
   } catch (error) {
     console.error("Get my transactions error:", error);
     return res.status(500).json({ message: "Lỗi lấy danh sách transactions", error: error.message, success: false });
+  }
+};
+
+exports.payOSWebhook = async (req, res) => {
+  try {
+    // Log toàn bộ payload để theo dõi
+    console.log("[PayOS Webhook] payload:", req.body);
+
+    // Chuẩn hóa dữ liệu theo cấu trúc phổ biến của PayOS
+    const body = req.body || {};
+    console.log(body);
+    const data = body.data || body || {};
+    const orderCode = data.orderCode || data.order_code || body.orderCode || body.order_code;
+    const status = data.status || body.event || body.status; // PayOS thường trả 'PAYMENT_SUCCESS'/'PAID'
+
+    if (orderCode) {
+      // Hợp thức các trạng thái thành 'paid' khi thành công
+      const successKeywords = ["PAID", "PAYMENT_SUCCESS", "SUCCEEDED", "SUCCESS", "paid", "success"]; 
+      if (successKeywords.includes(String(status).toUpperCase())) {
+        try {
+          await markPaidAndUpgrade(orderCode);
+        } catch (e) {
+          console.warn("markPaidAndUpgrade failed:", e?.message);
+        }
+      }
+    }
+
+    // Bắt buộc trả 200 để PayOS coi là nhận thành công
+    return res.status(200).json({ success: true, received: true });
+  } catch (error) {
+    console.error("PayOS webhook error:", error);
+    return res.status(500).json({ message: "Lỗi xử lý webhook", error: error.message, success: false });
   }
 };

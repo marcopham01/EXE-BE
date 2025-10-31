@@ -14,7 +14,10 @@ var cors = require("cors");
 const bodyParser = require("body-parser");
 //API only
 app.use(logger('dev'));
-app.use(express.json());
+// Lưu lại rawBody để xác thực chữ ký webhook (PayOS)
+app.use(express.json({
+  verify: (req, res, buf) => { req.rawBody = buf; }
+}));
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
