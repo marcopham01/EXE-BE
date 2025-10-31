@@ -300,7 +300,7 @@ exports.recommendMealsByBMI = async (req, res) => {
         if (calorieTarget < 1200) calorieTarget = 1200; // sàn an toàn
 
         // Phân bổ cho các bữa
-        const ratios = { breakfast: 0.2, lunch: 0.35, dinner: 0.35, dessert: 0.1 };
+        const ratios = { breakfast: 0.20, lunch: 0.4, dinner: 0.4 };
         const breakdown = Object.fromEntries(
             Object.entries(ratios).map(([k, r]) => [k, Math.round(calorieTarget * r)])
         );

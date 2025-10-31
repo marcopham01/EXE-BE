@@ -28,8 +28,15 @@ async function extractIngredientsFromImage({ imageBuffer, mimeType, imageUrl }) 
 
   const parts = [];
   if (imageUrl) {
+    // Fetch ảnh về và nhúng inline_data (API không hỗ trợ image_url)
+    const resp = await fetch(imageUrl);
+    if (!resp.ok) {
+      throw new Error(`Fetch image failed: ${resp.status} ${resp.statusText}`);
+    }
+    const ct = resp.headers.get("content-type") || "image/jpeg";
+    const buf = Buffer.from(await resp.arrayBuffer());
     parts.push({ text: "Ảnh từ URL" });
-    parts.push({ image_url: imageUrl });
+    parts.push({ inline_data: { data: buf.toString("base64"), mime_type: ct } });
   } else if (imageBuffer && mimeType) {
     parts.push({ text: "Ảnh tải lên" });
     parts.push({ inline_data: { data: imageBuffer.toString("base64"), mime_type: mimeType } });
@@ -39,18 +46,23 @@ async function extractIngredientsFromImage({ imageBuffer, mimeType, imageUrl }) 
 
   const result = await model.generateContent([{ text: "Hãy trích xuất danh sách nguyên liệu" }, ...parts]);
   const text = result.response.text();
+  // Cố gắng bóc JSON nếu model trả kèm mô tả/markdown
+  const jsonStr = (() => {
+    const m = text.match(/\{[\s\S]*\}/);
+    return m ? m[0] : text;
+  })();
   try {
-    const json = JSON.parse(text);
+    const json = JSON.parse(jsonStr);
     const list = Array.isArray(json.ingredients) ? json.ingredients : [];
     return list
-      .map((s) => String(s).trim())
+      .map((s) => String(s).replace(/^\"|\"$/g, "").trim())
       .filter(Boolean)
       .slice(0, 15);
   } catch (_) {
     // fallback: tách dòng/ dấu phẩy
-    const items = text
+    const items = jsonStr
       .split(/\n|,|\u2022|-/g)
-      .map((s) => s.replace(/^[\s\-\*\d\.]+/, "").trim())
+      .map((s) => s.replace(/^[\s\-\*\d\.]+/, "").replace(/^\"|\"$/g, "").trim())
       .filter(Boolean);
     return Array.from(new Set(items)).slice(0, 15);
   }

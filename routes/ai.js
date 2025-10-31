@@ -3,9 +3,11 @@ const router = express.Router();
 const AI = require("../controller/AIController");
 const auth = require("../middlewares/auth");
 
-// Cho phép cả khách dùng thử; nếu muốn bắt buộc đăng nhập thì thêm auth ở đây
+// Bắt buộc đăng nhập: tự lấy userId từ token
 router.post(
   "/ingredients-from-image",
+  auth.authMiddleWare,
+  auth.requireRole("customer", "admin"),
   AI.uploadMiddleware,
   AI.ingredientsFromImage
 );

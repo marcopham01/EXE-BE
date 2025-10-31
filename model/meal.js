@@ -59,7 +59,7 @@ const mealSchema = new schema({
     },
     mealTime: {
         type: [String],
-        enum: ["breakfast", "lunch", "dinner", "dessert"],
+        enum: ["breakfast", "lunch", "dinner"],
     },
     rating: {
         type: Number,

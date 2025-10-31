@@ -63,6 +63,8 @@ const userSchema = new schema(
       enum: ["Học sinh", "Sinh viên", "Đã đi làm"],
       trim: true,
     },
+    heightCm: { type: Number },
+    weightKg: { type: Number },
     resetToken: {
       type: String,
     },
@@ -95,6 +97,15 @@ userSchema.virtual("age").get(function () {
     age--;
   }
   return age;
+});
+
+// Virtual BMI tính từ heightCm/weightKg nếu có
+userSchema.virtual("bmi").get(function () {
+  const h = Number(this.heightCm);
+  const w = Number(this.weightKg);
+  if (!h || !w) return undefined;
+  const m = h / 100;
+  return Number((w / (m * m)).toFixed(2));
 });
 
 const user = mongoose.model("User", userSchema);
