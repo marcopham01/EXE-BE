@@ -1,5 +1,6 @@
 // controller/UserController.js
 var User = require("../model/user");
+const Payment = require("../model/payment");
 var bryctjs = require("bcryptjs");
 var jwt = require("jsonwebtoken");
 const { cacheGet, cacheSet, cacheDel } = require("../services/redis");
@@ -182,5 +183,33 @@ exports.getAllProfileUsers = async (req, res) => {
       error: error.message,
       success: false,
     });
+  }
+};
+
+// Xóa tài khoản của chính mình
+exports.deleteMe = async (req, res) => {
+  try {
+    const userId = req._id?.toString();
+    if (!userId) return res.status(401).json({ message: "Chưa đăng nhập" });
+
+    // Xóa các Payment liên quan tới user
+    await Payment.deleteMany({ user_id: userId });
+
+    // Xóa User
+    await User.findByIdAndDelete(userId);
+
+    // Dọn cache liên quan
+    try {
+      await cacheDel(`users:${userId}`);
+      await cacheDel("users:all");
+    } catch (e) {
+      // bỏ qua lỗi cache để không chặn luồng xóa chính
+    }
+
+    return res.json({ success: true, message: "Đã xóa tài khoản" });
+  } catch (e) {
+    return res
+      .status(500)
+      .json({ message: "Lỗi xóa tài khoản", error: e.message, success: false });
   }
 };

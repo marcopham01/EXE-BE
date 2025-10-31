@@ -13,4 +13,11 @@ router.get(
 );
 router.get("/getallprofile", user.getAllProfileUsers);
 
+router.delete(
+  "/delete",
+  auth.authMiddleWare,
+  auth.requireRole("customer", "admin"),
+  user.deleteMe
+);
+
 module.exports = router;
