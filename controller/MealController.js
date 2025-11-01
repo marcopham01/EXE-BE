@@ -320,7 +320,7 @@ exports.recommendMealsByBMI = async (req, res) => {
                 totalKcal: { $gte: minK, $lte: maxK },
             })
                 .sort({ rating: -1 })
-                .limit(5)
+                .limit(10)
                 .select("name image totalKcal dietType mealTime category subCategory")
                 .populate({ path: "category", select: "name" })
                 .populate({ path: "subCategory", select: "name" })
