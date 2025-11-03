@@ -1,3 +1,4 @@
+const path = require('path');
 const swaggerJsdoc = require('swagger-jsdoc');
 
 const options = {
@@ -11,9 +12,20 @@ const options = {
     servers: [
       { url: '/api' },
     ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+      },
+    },
+    security: [ { bearerAuth: [] } ],
   },
+  // Dùng đường dẫn tuyệt đối để tránh lỗi khi chạy ở Render
   apis: [
-    './routes/*.js',
+    path.join(__dirname, '../routes/*.js'),
   ],
 };
 
