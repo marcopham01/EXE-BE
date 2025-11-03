@@ -10,6 +10,7 @@ const crypto = require("crypto");
 const Payment = require("../model/payment");
 const User = require("../model/user");
 const MealPlan = require("../model/mealPlan");
+const Noti = require("./NotificationController");
 const {
   createPagination,
   createPaginatedResponse,
@@ -344,7 +345,15 @@ exports.recommendMealsByBMI = async (req, res) => {
             },
         };
         try {
-            await MealPlan.create(planData);
+            const created = await MealPlan.create(planData);
+            try {
+                await Noti.createForUser(userId, {
+                    type: "meal_plan_created",
+                    title: "Đã tạo kế hoạch bữa ăn cá nhân hoá",
+                    message: `Kế hoạch mới đã sẵn sàng với mục tiêu ${planData.result.calorieTarget} kcal/ngày` ,
+                    data: { mealPlanId: created?._id, bmi: planData.result.bmi, tdee: planData.result.tdee },
+                });
+            } catch (_) {}
         } catch (e) {
             // Không chặn response nếu lưu lịch sử lỗi
         }

@@ -12,6 +12,7 @@ const payOS = new PayOS(
   process.env.PAYOS_API_KEY,
   process.env.PAYOS_CHECKSUM_KEY
 );
+const Noti = require("./NotificationController");
 
 // Helper: đánh dấu thanh toán thành công và nâng cấp user premium (đơn giản, idempotent)
 async function markPaidAndUpgrade(orderCode) {
@@ -108,6 +109,15 @@ exports.createPaymentLink = async (req, res) => {
         premiumMembership: true,
         premiumMembershipExpires: trialExpiredAt,
       });
+      // Tạo thông báo premium thành công (trial)
+      try {
+        await Noti.createForUser(userId, {
+          type: "premium_success",
+          title: "Kích hoạt Premium (dùng thử)",
+          message: "Bạn đã kích hoạt Premium dùng thử 3 ngày thành công.",
+          data: { order_code: payment.order_code, expires: trialExpiredAt },
+        });
+      } catch (_) {}
       return res.status(201).json({
         message: "Kích hoạt dùng thử thành công!",
         success: true,
@@ -221,6 +231,15 @@ exports.updatePaymentStatus = async (req, res) => {
         userUpdate.premiumMembershipType = "monthly";
       }
       await User.findByIdAndUpdate(payment.user_id, userUpdate);
+      // Tạo thông báo premium thành công
+      try {
+        await Noti.createForUser(payment.user_id?.toString(), {
+          type: "premium_success",
+          title: "Thanh toán Premium thành công",
+          message: "Tài khoản của bạn đã được nâng cấp Premium.",
+          data: { order_code, expires: payment.expiredAt },
+        });
+      } catch (_) {}
     }
     await payment.save();
     console.log(`Đã cập nhật trạng thái: ${order_code} -> ${status}`);
@@ -256,7 +275,19 @@ exports.paymentSuccess = async (req, res) => {
     // In log cho dev
     console.log(`Thanh toán thành công: ${order_code}`);
     // Đánh dấu đơn đã thanh toán và nâng cấp user (đơn giản cho dự án môn học)
-    try { await markPaidAndUpgrade(order_code); } catch (e) { console.warn("Auto-upgrade failed:", e?.message); }
+    try {
+      const result = await markPaidAndUpgrade(order_code);
+      if (result?.ok && result?.payment) {
+        try {
+          await Noti.createForUser(result.payment.user_id?.toString(), {
+            type: "premium_success",
+            title: "Thanh toán Premium thành công",
+            message: "Tài khoản của bạn đã được nâng cấp Premium.",
+            data: { order_code, expires: result.payment.expiredAt },
+          });
+        } catch (_) {}
+      }
+    } catch (e) { console.warn("Auto-upgrade failed:", e?.message); }
 
     // Nếu cấu hình FRONTEND_URL là một URL thực, cho phép redirect tới đó
     const frontendUrl = process.env.FRONTEND_URL
@@ -444,7 +475,17 @@ exports.payOSWebhook = async (req, res) => {
       const successKeywords = ["PAID", "PAYMENT_SUCCESS", "SUCCEEDED", "SUCCESS", "paid", "success"]; 
       if (successKeywords.includes(String(status).toUpperCase())) {
         try {
-          await markPaidAndUpgrade(orderCode);
+          const result = await markPaidAndUpgrade(orderCode);
+          if (result?.ok && result?.payment) {
+            try {
+              await Noti.createForUser(result.payment.user_id?.toString(), {
+                type: "premium_success",
+                title: "Thanh toán Premium thành công",
+                message: "Tài khoản của bạn đã được nâng cấp Premium.",
+                data: { order_code: orderCode, expires: result.payment.expiredAt },
+              });
+            } catch (_) {}
+          }
         } catch (e) {
           console.warn("markPaidAndUpgrade failed:", e?.message);
         }

@@ -20,6 +20,13 @@ app.set('port', port);
  */
 
 var server = http.createServer(app);
+// Initialize Socket.IO
+try {
+  const { init } = require("../services/socket");
+  init(server);
+} catch (e) {
+  console.warn("Socket init failed:", e?.message);
+}
 
 /**
  * Listen on provided port, on all network interfaces.
