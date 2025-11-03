@@ -21,6 +21,11 @@ const auth = require("../middlewares/auth");
  *     responses:
  *       200:
  *         description: Danh sách món ăn
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/PaginatedMeals' }
+ *       500:
+ *         description: Lỗi máy chủ
  */
 router.get("/getallmeal",
     auth.authMiddleWare,
@@ -42,6 +47,25 @@ router.get("/getallmeal",
  *     responses:
  *       200:
  *         description: Thông tin món ăn
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string, example: 'Meal found successfully' }
+ *                 success: { type: boolean, example: true }
+ *                 error: { type: boolean, example: false }
+ *                 data: { $ref: '#/components/schemas/Meal' }
+ *       404:
+ *         description: Không tìm thấy
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *             examples:
+ *               notFound:
+ *                 value: { success: false, error: true, message: 'Meal not found' }
+ *       500:
+ *         description: Lỗi máy chủ
  */
 router.get("/getmealbyid/:id",
     auth.authMiddleWare,
@@ -66,10 +90,61 @@ router.get("/getmealbyid/:id",
  *             properties:
  *               heightCm: { type: number, example: 170 }
  *               weightKg: { type: number, example: 65 }
- *               bmi: { type: number, example: 22.5 }
+ *               activityLevel: { type: string, example: 'Vận động vừa phải' }
+ *               goal: { type: string, example: 'Giảm cân' }
  *     responses:
  *       200:
  *         description: Danh sách gợi ý và kế hoạch bữa ăn
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string }
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     bmi: { type: number }
+ *                     bmiClass: { type: string }
+ *                     bmr: { type: number }
+ *                     tdee: { type: number }
+ *                     calorieTarget: { type: number }
+ *                     breakdown:
+ *                       type: object
+ *                       properties:
+ *                         breakfast: { type: number }
+ *                         lunch: { type: number }
+ *                         dinner: { type: number }
+ *                     dietType: { type: string }
+ *                     meals: { type: object }
+ *       400:
+ *         description: Thiếu/không hợp lệ đầu vào
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *             examples:
+ *               missingBody:
+ *                 value: { success: false, message: 'Thiếu chiều cao hoặc cân nặng' }
+ *               invalidLevel:
+ *                 value: { success: false, message: "activityLevel chỉ được phép: 'Ít vận động' | 'Vận động vừa phải' | 'Vận động nhiều'" }
+ *               invalidGoal:
+ *                 value: { success: false, message: "goal chỉ được phép: 'Giảm cân' | 'Duy trì cân nặng' | 'Tăng cân'" }
+ *       401:
+ *         description: Chưa đăng nhập
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       402:
+ *         description: Premium required
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *             examples:
+ *               premium:
+ *                 value: { success: false, message: 'Tính năng Premium: gói đã hết hạn hoặc chưa kích hoạt' }
+ *       500:
+ *         description: Lỗi máy chủ
  */
 router.post("/recommendation/bmi",
     auth.authMiddleWare,
@@ -92,6 +167,25 @@ router.get("/recommendation/history",
  *     responses:
  *       200:
  *         description: Bản kế hoạch mới nhất
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data: { $ref: '#/components/schemas/MealPlan' }
+ *       401:
+ *         description: Chưa đăng nhập
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       404:
+ *         description: Chưa có kế hoạch nào
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       500:
+ *         description: Lỗi máy chủ
  */
 router.get("/recommendation/latest",
     auth.authMiddleWare,
@@ -116,15 +210,28 @@ router.post("/createmeal",
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             properties:
- *               name: { type: string }
- *               dietType: { type: string, example: "Eat clean" }
- *               ingredients: { type: array, items: { type: string } }
- *               calories: { type: number }
+ *             $ref: '#/components/schemas/MealCreateRequest'
  *     responses:
  *       201:
  *         description: Tạo thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string }
+ *                 success: { type: boolean }
+ *                 error: { type: boolean }
+ *                 data: { $ref: '#/components/schemas/Meal' }
+ *       400:
+ *         description: Dữ liệu không hợp lệ
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       401:
+ *         description: Chưa đăng nhập hoặc thiếu quyền
+ *       500:
+ *         description: Lỗi máy chủ
  */
 router.put("/updatemeal/:id",
     auth.authMiddleWare,
@@ -153,6 +260,27 @@ router.put("/updatemeal/:id",
  *     responses:
  *       200:
  *         description: Cập nhật thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string }
+ *                 success: { type: boolean }
+ *                 error: { type: boolean }
+ *                 data: { $ref: '#/components/schemas/Meal' }
+ *       400:
+ *         description: Dữ liệu không hợp lệ
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       404:
+ *         description: Không tìm thấy
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       500:
+ *         description: Lỗi máy chủ
  */
 router.delete("/deletemeal/:id",
     auth.authMiddleWare,
@@ -174,6 +302,22 @@ router.delete("/deletemeal/:id",
  *     responses:
  *       200:
  *         description: Đã xóa
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string }
+ *                 success: { type: boolean }
+ *                 error: { type: boolean }
+ *                 data: { $ref: '#/components/schemas/Meal' }
+ *       404:
+ *         description: Không tìm thấy
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       500:
+ *         description: Lỗi máy chủ
  */
 
 module.exports = router;
