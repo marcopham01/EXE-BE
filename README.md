@@ -27,3 +27,7 @@ Cấu hình .env:
 GOOGLE_GENERATIVE_AI_API_KEY=your_key
 GEMINI_MODEL=gemini-1.5-flash
 ```
+
+## Deploy nhanh lên Render
+
+Xem hướng dẫn chi tiết tại `docs/DEPLOY_RENDER.md`.
