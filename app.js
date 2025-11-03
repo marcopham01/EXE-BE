@@ -37,6 +37,10 @@ app.use(
 
 // connect DB
 dbConnect();
+// Swagger UI - API docs at /api/docs
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./docs/swagger');
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use("/api", routes);
 // catch 404 and forward to error handler
 app.use(function (req, res, next) {

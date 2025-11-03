@@ -31,3 +31,8 @@ GEMINI_MODEL=gemini-1.5-flash
 ## Deploy nhanh lên Render
 
 Xem hướng dẫn chi tiết tại `docs/DEPLOY_RENDER.md`.
+
+## API Docs (Swagger UI)
+
+- Truy cập: `/api/docs`
+- Ví dụ Render: `https://<your-render-url>/api/docs`
