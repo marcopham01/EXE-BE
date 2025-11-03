@@ -52,6 +52,26 @@ router.post("/register", user.registerUser);
  *         description: Đăng nhập thành công
  */
 router.post("/login", user.login);
+
+/**
+ * @openapi
+ * /users/refresh:
+ *   post:
+ *     tags: [users]
+ *     summary: Cấp mới accessToken bằng refreshToken
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               refreshToken: { type: string }
+ *     responses:
+ *       200:
+ *         description: Access token mới
+ */
+router.post("/refresh", user.refresh);
 router.get(
   "/getprofile",
   auth.authMiddleWare,

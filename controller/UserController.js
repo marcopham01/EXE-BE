@@ -101,6 +101,16 @@ exports.login = async (req, res) => {
     const refreshToken = jwt.sign({ userId: user._id }, refreshKey, {
       expiresIn: "1d",
     });
+    // Lưu refreshToken vào HttpOnly cookie (xoay bảo mật theo môi trường)
+    const isProd = process.env.NODE_ENV === "production";
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: isProd, // cần HTTPS ở production
+      sameSite: isProd ? "None" : "Lax",
+      maxAge: 24 * 60 * 60 * 1000, // 1d
+      path: "/",
+    });
+
     return res.status(201).json({ status: true, accessToken, refreshToken });
   } catch (error) {
     return res.status(401).json({
@@ -108,6 +118,67 @@ exports.login = async (req, res) => {
       error: true,
       success: false,
     });
+  }
+};
+
+// Phát hành accessToken mới bằng refreshToken
+exports.refresh = async (req, res) => {
+  try {
+    const secretKey = process.env.SECRET_KEY;
+    const refreshKey = process.env.REFRESH_KEY;
+
+    // Ưu tiên lấy từ cookie HttpOnly nếu có, fallback về body
+    const providedToken =
+      req.cookies?.refreshToken || req.body?.refreshToken || "";
+    if (!providedToken) {
+      return res
+        .status(400)
+        .json({ message: "Missing refreshToken", success: false });
+    }
+
+    // Xác thực refreshToken
+    let payload;
+    try {
+      payload = jwt.verify(providedToken, refreshKey);
+    } catch (e) {
+      return res
+        .status(401)
+        .json({ message: "Invalid refreshToken", success: false });
+    }
+
+    // Lấy thông tin user tối thiểu để nhúng vào accessToken
+    const user = await User.findById(payload.userId).select("username").lean();
+    if (!user) {
+      return res.status(401).json({ message: "Unauthorized", success: false });
+    }
+
+    // Cấp accessToken mới và xoay refreshToken (tăng an toàn)
+    const accessToken = jwt.sign(
+      { userId: payload.userId, username: user.username },
+      secretKey,
+      { expiresIn: "1h" }
+    );
+    const newRefreshToken = jwt.sign({ userId: payload.userId }, refreshKey, {
+      expiresIn: "1d",
+    });
+
+    // Cập nhật cookie HttpOnly cho refreshToken mới
+    const isProd = process.env.NODE_ENV === "production";
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: isProd ? "None" : "Lax",
+      maxAge: 24 * 60 * 60 * 1000,
+      path: "/",
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, accessToken, refreshToken: newRefreshToken });
+  } catch (error) {
+    return res
+      .status(500)
+      .json({ message: error.message || error, success: false });
   }
 };
 
