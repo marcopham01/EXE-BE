@@ -106,7 +106,7 @@ exports.login = async (req, res) => {
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: isProd, // cần HTTPS ở production
-      sameSite: isProd ? "None" : "Lax",
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: 24 * 60 * 60 * 1000, // 1d
       path: "/",
     });
@@ -167,7 +167,7 @@ exports.refresh = async (req, res) => {
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
       secure: isProd,
-      sameSite: isProd ? "None" : "Lax",
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: 24 * 60 * 60 * 1000,
       path: "/",
     });

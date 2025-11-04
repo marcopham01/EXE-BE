@@ -8,6 +8,10 @@ const dbConnect = require("./DB/db");
 const routes = require("./router");
 const { connectRedis } = require("./services/redis");
 var app = express();
+// Tin cậy proxy của Render/Heroku để secure cookie hoạt động đúng
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
 // Initialize Redis (non-blocking)
 connectRedis().catch((err) => console.error("Redis init failed:", err));
 var cors = require("cors");
@@ -29,7 +33,17 @@ require("./model/meal/subCategory");
 
 app.use(
   cors({
-    origin: "*", // Cho phép tất cả origins
+    // Chỉ định origin cụ thể để bật credential cookie
+    origin: (origin, callback) => {
+      const allowed = (process.env.CLIENT_URL || process.env.FRONTEND_URL || "").split(","
+      ).map(o => o.trim()).filter(Boolean);
+      // Cho phép requests không có origin (Postman/cURL) hoặc nằm trong whitelist
+      if (!origin || allowed.length === 0 || allowed.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
