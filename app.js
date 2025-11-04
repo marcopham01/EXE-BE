@@ -35,10 +35,18 @@ app.use(
   cors({
     // Chỉ định origin cụ thể để bật credential cookie
     origin: (origin, callback) => {
-      const allowed = (process.env.CLIENT_URL || process.env.FRONTEND_URL || "").split(","
-      ).map(o => o.trim()).filter(Boolean);
+      const whitelistEnv = [
+        process.env.CLIENT_URL || "",
+        process.env.FRONTEND_URL || "",
+        process.env.BACKEND_BASE_URL || "",
+      ]
+        .join(",")
+        .split(",")
+        .map(o => o.trim().replace(/\/$/, ""))
+        .filter(Boolean);
       // Cho phép requests không có origin (Postman/cURL) hoặc nằm trong whitelist
-      if (!origin || allowed.length === 0 || allowed.includes(origin)) {
+      const normalizedOrigin = (origin || "").replace(/\/$/, "");
+      if (!origin || whitelistEnv.length === 0 || whitelistEnv.includes(normalizedOrigin)) {
         return callback(null, true);
       }
       return callback(new Error("Not allowed by CORS"));
