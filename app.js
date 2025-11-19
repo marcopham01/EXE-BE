@@ -44,9 +44,15 @@ app.use(
         .split(",")
         .map(o => o.trim().replace(/\/$/, ""))
         .filter(Boolean);
+      
+      // Cho phép localhost trong development mode
+      const isDevelopment = process.env.NODE_ENV !== 'production';
+      const localhostPatterns = ['http://localhost', 'http://127.0.0.1'];
+      const isLocalhost = isDevelopment && origin && localhostPatterns.some(pattern => origin.startsWith(pattern));
+      
       // Cho phép requests không có origin (Postman/cURL) hoặc nằm trong whitelist
       const normalizedOrigin = (origin || "").replace(/\/$/, "");
-      if (!origin || whitelistEnv.length === 0 || whitelistEnv.includes(normalizedOrigin)) {
+      if (!origin || whitelistEnv.length === 0 || whitelistEnv.includes(normalizedOrigin) || isLocalhost) {
         return callback(null, true);
       }
       return callback(new Error("Not allowed by CORS"));

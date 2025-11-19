@@ -55,6 +55,48 @@ exports.getMealById = async (req, res) => {
     }
 }
 
+exports.searchMealByName = async (req, res) => {
+    try {
+        const { name, page = 1, limit = 10 } = req.query;
+        
+        if (!name || name.trim() === "") {
+            return res.status(400).json({ 
+                message: "Tên món ăn không được để trống", 
+                error: true, 
+                success: false 
+            });
+        }
+
+        const { page: validatedPage, limit: validatedLimit } = validatePagination(page, limit);
+        
+        // Tìm kiếm không phân biệt hoa thường với regex
+        const searchQuery = {
+            name: { $regex: name.trim(), $options: "i" }
+        };
+        
+        const total = await Meal.countDocuments(searchQuery);
+        const pagination = createPagination(validatedPage, validatedLimit, total);
+        
+        const meals = await Meal.find(searchQuery)
+            .populate({ path: "ingredients", select: "name calories unit type image" })
+            .populate({ path: "category", select: "name description" })
+            .populate({ path: "subCategory", select: "name category" })
+            .skip(pagination.skip)
+            .limit(pagination.limit)
+            .lean();
+        
+        const response = createPaginatedResponse(
+            meals, 
+            pagination, 
+            `Tìm thấy ${total} món ăn với từ khóa "${name}"`
+        );
+        
+        return res.status(200).json(response);
+    } catch (error) {
+        return res.status(500).json({ message: error.message || error, error: true, success: false });
+    }
+}
+
 // exports.createMeal = async (req, res) => {
 exports.createMeal = async (req, res) => {
     try {

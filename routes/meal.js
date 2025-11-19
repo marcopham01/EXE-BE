@@ -71,6 +71,51 @@ router.get("/getmealbyid/:id",
     auth.authMiddleWare,
     auth.requireRole("admin","customer"),
     meal.getMealById);
+/**
+ * @openapi
+ * /meal/searchmeal:
+ *   get:
+ *     tags: [meal]
+ *     summary: Tìm kiếm món ăn theo tên
+ *     parameters:
+ *       - in: query
+ *         name: name
+ *         required: true
+ *         schema: { type: string }
+ *         description: Tên món ăn cần tìm kiếm
+ *       - in: query
+ *         name: page
+ *         required: false
+ *         schema: { type: integer, default: 1 }
+ *         description: Số trang
+ *       - in: query
+ *         name: limit
+ *         required: false
+ *         schema: { type: integer, default: 10 }
+ *         description: Số lượng món ăn mỗi trang
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Danh sách món ăn tìm được
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/PaginatedMeals' }
+ *       400:
+ *         description: Thiếu tên món ăn
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *             examples:
+ *               missingName:
+ *                 value: { success: false, error: true, message: 'Tên món ăn không được để trống' }
+ *       500:
+ *         description: Lỗi máy chủ
+ */
+router.get("/searchmeal",
+    auth.authMiddleWare,
+    auth.requireRole("admin","customer"),
+    meal.searchMealByName);
 
 // Premium: khuyến nghị theo BMI
 /**
