@@ -10,6 +10,35 @@ const crypto = require("crypto");
 const Payment = require("../model/payment");
 const User = require("../model/user");
 const MealPlan = require("../model/mealPlan");
+const SavedMeal = require("../model/savedMeal");
+const MealLogEntry = require("../model/mealLogEntry");
+
+const MEAL_TIMES = ["breakfast", "lunch", "dinner"];
+
+const toDateKey = (d) => {
+    const year = d.getFullYear();
+    const month = `${d.getMonth() + 1}`.padStart(2, "0");
+    const day = `${d.getDate()}`.padStart(2, "0");
+    return `${year}-${month}-${day}`;
+};
+
+const normalizeDateKey = (value) => {
+    if (value && typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return value;
+    }
+    const parsed = value instanceof Date ? value : value ? new Date(value) : new Date();
+    if (Number.isNaN(parsed.getTime())) {
+        throw new Error("Ngày không hợp lệ");
+    }
+    return toDateKey(parsed);
+};
+
+const normalizeTags = (tags) => {
+    if (!Array.isArray(tags)) return [];
+    return tags
+        .filter((tag) => typeof tag === "string" && tag.trim() !== "")
+        .map((tag) => tag.trim());
+};
 const Noti = require("./NotificationController");
 const {
   createPagination,
@@ -450,3 +479,263 @@ exports.getLatestMealPlan = async (req, res) => {
         return res.status(500).json({ message: error.message || error, success: false });
     }
 }
+
+exports.upsertSavedMeal = async (req, res) => {
+    try {
+        const userId = req._id?.toString();
+        if (!userId) return res.status(401).json({ success: false, message: "Chưa đăng nhập" });
+
+        const { mealId, note, tags } = req.body || {};
+        if (!mealId) {
+            return res.status(400).json({ success: false, message: "Thiếu mealId" });
+        }
+        if (!mongoose.Types.ObjectId.isValid(mealId)) {
+            return res.status(400).json({ success: false, message: "mealId không hợp lệ" });
+        }
+
+        const meal = await Meal.findById(mealId)
+            .select("name image totalKcal dietType mealTime tag")
+            .lean();
+        if (!meal) {
+            return res.status(404).json({ success: false, message: "Không tìm thấy món ăn" });
+        }
+
+        const payload = {};
+        if (note !== undefined) payload.note = note;
+        if (tags !== undefined) payload.tags = normalizeTags(tags);
+
+        let saved = await SavedMeal.findOne({ user_id: userId, meal: mealId });
+        if (saved) {
+            if (payload.note !== undefined) saved.note = payload.note;
+            if (payload.tags !== undefined) saved.tags = payload.tags;
+            await saved.save();
+        } else {
+            saved = await SavedMeal.create({
+                user_id: userId,
+                meal: mealId,
+                note: payload.note,
+                tags: payload.tags || [],
+            });
+        }
+
+        const populated = await saved.populate({
+            path: "meal",
+            select: "name image totalKcal dietType mealTime tag",
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: "Đã lưu món ăn cho user",
+            data: populated,
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message || error });
+    }
+};
+
+exports.getSavedMeals = async (req, res) => {
+    try {
+        const userId = req._id?.toString();
+        if (!userId) return res.status(401).json({ success: false, message: "Chưa đăng nhập" });
+
+        const { page = 1, limit = 20 } = req.query;
+        const p = Math.max(1, parseInt(page, 10) || 1);
+        const l = Math.min(50, Math.max(1, parseInt(limit, 10) || 20));
+
+        const query = { user_id: userId };
+        const [total, items] = await Promise.all([
+            SavedMeal.countDocuments(query),
+            SavedMeal.find(query)
+                .sort({ createdAt: -1 })
+                .skip((p - 1) * l)
+                .limit(l)
+                .populate({ path: "meal", select: "name image totalKcal dietType mealTime tag" })
+                .lean(),
+        ]);
+
+        return res.status(200).json({
+            success: true,
+            data: items,
+            pagination: {
+                page: p,
+                limit: l,
+                total,
+                totalPages: Math.ceil(total / l) || 1,
+                hasNextPage: p * l < total,
+                hasPrevPage: p > 1,
+            },
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message || error });
+    }
+};
+
+exports.removeSavedMeal = async (req, res) => {
+    try {
+        const userId = req._id?.toString();
+        if (!userId) return res.status(401).json({ success: false, message: "Chưa đăng nhập" });
+
+        const { mealId } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(mealId)) {
+            return res.status(400).json({ success: false, message: "mealId không hợp lệ" });
+        }
+
+        const removed = await SavedMeal.findOneAndDelete({ user_id: userId, meal: mealId });
+        if (!removed) {
+            return res.status(404).json({ success: false, message: "User chưa lưu món ăn này" });
+        }
+
+        return res.status(200).json({ success: true, message: "Đã xoá món ăn khỏi danh sách lưu" });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message || error });
+    }
+};
+
+exports.createMealLogEntry = async (req, res) => {
+    try {
+        const userId = req._id?.toString();
+        if (!userId) return res.status(401).json({ success: false, message: "Chưa đăng nhập" });
+
+        const { mealId, mealTime, date, portion = 1, note, caloriesOverride } = req.body || {};
+
+        if (!mealId || !mealTime) {
+            return res.status(400).json({ success: false, message: "Thiếu mealId hoặc mealTime" });
+        }
+        if (!mongoose.Types.ObjectId.isValid(mealId)) {
+            return res.status(400).json({ success: false, message: "mealId không hợp lệ" });
+        }
+        if (!MEAL_TIMES.includes(mealTime)) {
+            return res.status(400).json({ success: false, message: "mealTime phải là breakfast, lunch hoặc dinner" });
+        }
+        if (!(portion > 0)) {
+            return res.status(400).json({ success: false, message: "portion phải lớn hơn 0" });
+        }
+        if (caloriesOverride !== undefined && !(caloriesOverride >= 0)) {
+            return res.status(400).json({ success: false, message: "caloriesOverride không hợp lệ" });
+        }
+
+        let dateKey;
+        try {
+            dateKey = normalizeDateKey(date);
+        } catch (err) {
+            return res.status(400).json({ success: false, message: err.message });
+        }
+
+        const meal = await Meal.findById(mealId)
+            .select("name image totalKcal dietType mealTime tag")
+            .lean();
+        if (!meal) {
+            return res.status(404).json({ success: false, message: "Không tìm thấy món ăn" });
+        }
+
+        const entry = await MealLogEntry.create({
+            user_id: userId,
+            meal: mealId,
+            mealTime,
+            date: dateKey,
+            portion,
+            note,
+            caloriesOverride,
+        });
+
+        const populated = await entry.populate({
+            path: "meal",
+            select: "name image totalKcal dietType mealTime tag",
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: "Đã lưu bữa ăn vào nhật ký",
+            data: populated,
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message || error });
+    }
+};
+
+exports.getMealLogs = async (req, res) => {
+    try {
+        const userId = req._id?.toString();
+        if (!userId) return res.status(401).json({ success: false, message: "Chưa đăng nhập" });
+
+        let { startDate, endDate } = req.query;
+
+        try {
+            if (startDate) startDate = normalizeDateKey(startDate);
+            if (endDate) endDate = normalizeDateKey(endDate);
+        } catch (err) {
+            return res.status(400).json({ success: false, message: err.message });
+        }
+
+        if (!startDate && !endDate) {
+            const end = new Date();
+            const start = new Date();
+            start.setDate(end.getDate() - 6);
+            startDate = normalizeDateKey(start);
+            endDate = normalizeDateKey(end);
+        } else if (startDate && !endDate) {
+            endDate = startDate;
+        } else if (!startDate && endDate) {
+            startDate = endDate;
+        }
+
+        if (startDate > endDate) {
+            return res.status(400).json({ success: false, message: "startDate không được lớn hơn endDate" });
+        }
+
+        const entries = await MealLogEntry.find({
+            user_id: userId,
+            date: { $gte: startDate, $lte: endDate },
+        })
+            .sort({ date: -1, mealTime: 1, createdAt: -1 })
+            .populate({ path: "meal", select: "name image totalKcal dietType mealTime tag" })
+            .lean();
+
+        const grouped = {};
+        entries.forEach((entry) => {
+            if (!grouped[entry.date]) {
+                grouped[entry.date] = { breakfast: [], lunch: [], dinner: [] };
+            }
+            const payload = {
+                _id: entry._id,
+                mealTime: entry.mealTime,
+                portion: entry.portion,
+                note: entry.note,
+                caloriesOverride: entry.caloriesOverride,
+                meal: entry.meal,
+                createdAt: entry.createdAt,
+                updatedAt: entry.updatedAt,
+            };
+            grouped[entry.date][entry.mealTime].push(payload);
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: grouped,
+            range: { startDate, endDate },
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message || error });
+    }
+};
+
+exports.deleteMealLogEntry = async (req, res) => {
+    try {
+        const userId = req._id?.toString();
+        if (!userId) return res.status(401).json({ success: false, message: "Chưa đăng nhập" });
+
+        const { id } = req.params;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ success: false, message: "ID không hợp lệ" });
+        }
+
+        const removed = await MealLogEntry.findOneAndDelete({ _id: id, user_id: userId });
+        if (!removed) {
+            return res.status(404).json({ success: false, message: "Không tìm thấy bản ghi" });
+        }
+
+        return res.status(200).json({ success: true, message: "Đã xoá bản ghi bữa ăn" });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message || error });
+    }
+};

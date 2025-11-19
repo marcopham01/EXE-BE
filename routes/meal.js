@@ -237,6 +237,189 @@ router.get("/recommendation/latest",
     auth.requireRole("customer","admin"),
     meal.getLatestMealPlan);
 
+/**
+ * @openapi
+ * /meal/saved:
+ *   post:
+ *     tags: [meal]
+ *     summary: Lưu hoặc cập nhật ghi chú cho một món ăn của user hiện tại
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/SavedMealRequest'
+ *     responses:
+ *       200:
+ *         description: Đã lưu món ăn
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data: { $ref: '#/components/schemas/SavedMeal' }
+ *       400:
+ *         description: Thiếu hoặc sai mealId
+ *       401:
+ *         description: Chưa đăng nhập
+ *       404:
+ *         description: Không tìm thấy món ăn
+ */
+router.post("/saved",
+    auth.authMiddleWare,
+    auth.requireRole("customer","admin"),
+    meal.upsertSavedMeal);
+
+/**
+ * @openapi
+ * /meal/saved:
+ *   get:
+ *     tags: [meal]
+ *     summary: Lấy danh sách món ăn đã lưu theo user
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
+ *     responses:
+ *       200:
+ *         description: Danh sách món ăn đã lưu
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: array
+ *                   items: { $ref: '#/components/schemas/SavedMeal' }
+ *                 pagination:
+ *                   $ref: '#/components/schemas/Pagination'
+ */
+router.get("/saved",
+    auth.authMiddleWare,
+    auth.requireRole("customer","admin"),
+    meal.getSavedMeals);
+
+/**
+ * @openapi
+ * /meal/saved/{mealId}:
+ *   delete:
+ *     tags: [meal]
+ *     summary: Xoá món ăn đã lưu của user
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: mealId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Đã xoá
+ *       404:
+ *         description: Không có món ăn này trong danh sách lưu
+ */
+router.delete("/saved/:mealId",
+    auth.authMiddleWare,
+    auth.requireRole("customer","admin"),
+    meal.removeSavedMeal);
+
+/**
+ * @openapi
+ * /meal/logs:
+ *   post:
+ *     tags: [meal]
+ *     summary: Ghi lại một bữa ăn trong nhật ký cá nhân
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/MealLogRequest'
+ *     responses:
+ *       201:
+ *         description: Đã tạo bản ghi
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data: { $ref: '#/components/schemas/MealLogEntry' }
+ */
+router.post("/logs",
+    auth.authMiddleWare,
+    auth.requireRole("customer","admin"),
+    meal.createMealLogEntry);
+
+/**
+ * @openapi
+ * /meal/logs:
+ *   get:
+ *     tags: [meal]
+ *     summary: Lấy nhật ký bữa ăn theo khoảng ngày
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema: { type: string, example: '2024-11-01' }
+ *       - in: query
+ *         name: endDate
+ *         schema: { type: string, example: '2024-11-07' }
+ *     responses:
+ *       200:
+ *         description: Nhật ký theo ngày
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: object
+ *                   additionalProperties:
+ *                     $ref: '#/components/schemas/MealLogByDate'
+ */
+router.get("/logs",
+    auth.authMiddleWare,
+    auth.requireRole("customer","admin"),
+    meal.getMealLogs);
+
+/**
+ * @openapi
+ * /meal/logs/{id}:
+ *   delete:
+ *     tags: [meal]
+ *     summary: Xoá một bản ghi bữa ăn theo id
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Đã xoá
+ *       404:
+ *         description: Không tìm thấy
+ */
+router.delete("/logs/:id",
+    auth.authMiddleWare,
+    auth.requireRole("customer","admin"),
+    meal.deleteMealLogEntry);
+
 // Admin routes
 router.post("/createmeal",
     auth.authMiddleWare,
