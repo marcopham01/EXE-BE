@@ -358,7 +358,12 @@ exports.recommendMealsByBMI = async (req, res) => {
             });
         }
 
-        // BMI
+        // BMI Calculation: BMI = weight (kg) / height (m)^2
+        // Phân loại theo tiêu chuẩn WHO:
+        // - < 18.5: Thiếu cân (Underweight)
+        // - 18.5-24.9: Cân đối (Normal)
+        // - 25-29.9: Thừa cân (Overweight)
+        // - >= 30: Béo phì (Obesity)
         const h = Number(heightCm) / 100;
         const w = Number(weightKg);
         if (!(h > 0) || !(w > 0)) {
@@ -366,22 +371,59 @@ exports.recommendMealsByBMI = async (req, res) => {
         }
         const bmi = +(w / (h * h)).toFixed(1);
         let bmiClass = "Normal";
-        if (bmi < 18.5) bmiClass = "Underweight";
-        else if (bmi < 25) bmiClass = "Normal";
-        else if (bmi < 30) bmiClass = "Overweight";
-        else bmiClass = "Obesity";
+        let bmiClassVi = "Cân đối";
+        if (bmi < 18.5) {
+            bmiClass = "Underweight";
+            bmiClassVi = "Thiếu cân";
+        } else if (bmi < 25) {
+            bmiClass = "Normal";
+            bmiClassVi = "Cân đối";
+        } else if (bmi < 30) {
+            bmiClass = "Overweight";
+            bmiClassVi = "Thừa cân";
+        } else {
+            bmiClass = "Obesity";
+            bmiClassVi = "Béo phì";
+        }
 
-        // BMR (Mifflin St Jeor)
+        // BMR (Basal Metabolic Rate) - Công thức Mifflin-St Jeor
+        // BMR là lượng calo cơ thể đốt cháy khi nghỉ ngơi hoàn toàn
+        // Công thức: BMR = 10*weight(kg) + 6.25*height(cm) - 5*age + (male: +5, female: -161)
         const bmr = Math.round(10 * w + 6.25 * (heightCm) - 5 * age + (gender === "male" ? 5 : -161));
 
-        // Hệ số hoạt động (đã chuẩn hoá ở trên)
+        // TDEE (Total Daily Energy Expenditure) - Tổng năng lượng tiêu thụ hàng ngày
+        // TDEE = BMR * Activity Factor
+        // Activity Factor: Ít vận động (1.2), Vận động vừa phải (1.55), Vận động nhiều (1.725)
         const tdee = Math.round(bmr * factor);
 
-        // Mục tiêu
-        const goalMapVi = { "giam can": -500, "duy tri can nang": 0, "tang can": 500 };
-        const delta = goalMapVi[g];
-        let calorieTarget = tdee + delta;
-        if (calorieTarget < 1200) calorieTarget = 1200; // sàn an toàn
+        // Calorie Target - Mục tiêu calo hàng ngày dựa trên goal
+        // Logic điều chỉnh:
+        // - Giảm cân: Trừ 15-20% TDEE (thay vì cố định -500) để phù hợp với mọi mức TDEE
+        //   + Người béo phì TDEE cao → giảm nhiều hơn (ví dụ: 3000 * 0.2 = 600 kcal)
+        //   + Người cân đối TDEE thấp → giảm ít hơn (ví dụ: 2000 * 0.15 = 300 kcal)
+        // - Duy trì: Giữ nguyên TDEE
+        // - Tăng cân: Cộng 10-15% TDEE (thay vì cố định +500)
+        let calorieTarget;
+        if (g === "giam can") {
+            // Giảm 15-20% TDEE, tối thiểu 400 kcal, tối đa 1000 kcal để an toàn
+            // Người béo phì sẽ giảm nhiều hơn, người nhẹ cân giảm ít hơn
+            const reductionPercent = bmi >= 30 ? 0.20 : bmi >= 25 ? 0.18 : 0.15; // Béo phì giảm 20%, thừa cân 18%, bình thường 15%
+            const reduction = Math.max(400, Math.min(1000, Math.round(tdee * reductionPercent)));
+            calorieTarget = tdee - reduction;
+        } else if (g === "tang can") {
+            // Tăng 10-15% TDEE, tối thiểu 300 kcal, tối đa 800 kcal
+            const increasePercent = bmi < 18.5 ? 0.15 : 0.10; // Thiếu cân tăng 15%, bình thường 10%
+            const increase = Math.max(300, Math.min(800, Math.round(tdee * increasePercent)));
+            calorieTarget = tdee + increase;
+        } else {
+            // Duy trì cân nặng
+            calorieTarget = tdee;
+        }
+        
+        // Sàn an toàn: không để calorie target dưới 1200 kcal (nguy hiểm cho sức khỏe)
+        // Trần an toàn: không vượt quá 5000 kcal (trừ khi TDEE rất cao)
+        if (calorieTarget < 1200) calorieTarget = 1200;
+        if (calorieTarget > 5000) calorieTarget = 5000;
 
         // Phân bổ cho các bữa
         const ratios = { breakfast: 0.20, lunch: 0.4, dinner: 0.4 };
@@ -419,6 +461,7 @@ exports.recommendMealsByBMI = async (req, res) => {
             result: {
                 bmi,
                 bmiClass,
+                bmiClassVi,
                 bmr,
                 tdee,
                 calorieTarget,
@@ -444,7 +487,10 @@ exports.recommendMealsByBMI = async (req, res) => {
         return res.status(200).json({
             message: "Tạo kế hoạch bữa ăn cá nhân hoá thành công",
             success: true,
-            data: planData.result,
+            data: {
+                ...planData.result,
+                bmiClassVi,
+            },
         });
     } catch (error) {
         return res.status(500).json({ message: error.message || error, success: false });
