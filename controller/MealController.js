@@ -397,33 +397,61 @@ exports.recommendMealsByBMI = async (req, res) => {
         const tdee = Math.round(bmr * factor);
 
         // Calorie Target - Mục tiêu calo hàng ngày dựa trên goal
-        // Logic điều chỉnh:
-        // - Giảm cân: Trừ 15-20% TDEE (thay vì cố định -500) để phù hợp với mọi mức TDEE
-        //   + Người béo phì TDEE cao → giảm nhiều hơn (ví dụ: 3000 * 0.2 = 600 kcal)
-        //   + Người cân đối TDEE thấp → giảm ít hơn (ví dụ: 2000 * 0.15 = 300 kcal)
-        // - Duy trì: Giữ nguyên TDEE
-        // - Tăng cân: Cộng 10-15% TDEE (thay vì cố định +500)
+        // Logic theo đề xuất: Kết hợp % TDEE và mức calo cố định an toàn
         let calorieTarget;
         if (g === "giam can") {
-            // Giảm 15-20% TDEE, tối thiểu 400 kcal, tối đa 1000 kcal để an toàn
-            // Người béo phì sẽ giảm nhiều hơn, người nhẹ cân giảm ít hơn
-            const reductionPercent = bmi >= 30 ? 0.20 : bmi >= 25 ? 0.18 : 0.15; // Béo phì giảm 20%, thừa cân 18%, bình thường 15%
-            const reduction = Math.max(400, Math.min(1000, Math.round(tdee * reductionPercent)));
+            // Logic Giảm cân (Thâm hụt Calo)
+            let reduction;
+            if (bmi >= 30) {
+                // BMI ≥ 30 (Béo phì): Chọn mức NHỎ NHẤT trong 3 lựa chọn
+                const option1 = Math.round(tdee * 0.20); // 20% TDEE
+                const option2 = 750; // 750 kcal
+                const option3 = 1000; // 1000 kcal
+                reduction = Math.min(option1, option2, option3);
+            } else if (bmi >= 25) {
+                // BMI 25-30 (Thừa cân): Chọn mức NHỎ NHẤT trong 2 lựa chọn
+                const option1 = Math.round(tdee * 0.15); // 15% TDEE
+                const option2 = 500; // 500 kcal
+                reduction = Math.min(option1, option2);
+            } else {
+                // BMI < 25 (Bình thường): Giảm nhẹ 10% TDEE (nếu muốn giảm)
+                reduction = Math.round(tdee * 0.10);
+            }
             calorieTarget = tdee - reduction;
+            
+            // Giới hạn an toàn tối thiểu theo BMI
+            if (bmi >= 30) {
+                // Béo phì: MAX(calorieTarget, 1500 kcal, BMR)
+                calorieTarget = Math.max(calorieTarget, 1500, bmr);
+            } else if (bmi >= 25) {
+                // Thừa cân: MAX(calorieTarget, 1200 kcal, BMR)
+                calorieTarget = Math.max(calorieTarget, 1200, bmr);
+            } else {
+                // Bình thường: MAX(calorieTarget, BMR)
+                calorieTarget = Math.max(calorieTarget, bmr);
+            }
         } else if (g === "tang can") {
-            // Tăng 10-15% TDEE, tối thiểu 300 kcal, tối đa 800 kcal
-            const increasePercent = bmi < 18.5 ? 0.15 : 0.10; // Thiếu cân tăng 15%, bình thường 10%
-            const increase = Math.max(300, Math.min(800, Math.round(tdee * increasePercent)));
+            // Logic Tăng cân (Thặng dư Calo)
+            let increase;
+            if (bmi < 18.5) {
+                // BMI < 18.5 (Thiếu cân): Chọn mức NHỎ NHẤT
+                const option1 = Math.round(tdee * 0.15); // 15% TDEE
+                const option2 = 500; // 500 kcal
+                increase = Math.min(option1, option2);
+            } else {
+                // BMI 18.5-25 (Bình thường): Chọn mức NHỎ NHẤT (nếu muốn tăng cơ)
+                const option1 = Math.round(tdee * 0.10); // 10% TDEE
+                const option2 = 300; // 300 kcal
+                increase = Math.min(option1, option2);
+            }
             calorieTarget = tdee + increase;
         } else {
             // Duy trì cân nặng
             calorieTarget = tdee;
         }
         
-        // Sàn an toàn: không để calorie target dưới 1200 kcal (nguy hiểm cho sức khỏe)
-        // Trần an toàn: không vượt quá 5000 kcal (trừ khi TDEE rất cao)
-        if (calorieTarget < 1200) calorieTarget = 1200;
-        if (calorieTarget > 5000) calorieTarget = 5000;
+        // Lưu ý quan trọng: Mục tiêu calo phải luôn ≥ BMR (an toàn tuyệt đối)
+        calorieTarget = Math.max(calorieTarget, bmr);
 
         // Phân bổ cho các bữa
         const ratios = { breakfast: 0.20, lunch: 0.4, dinner: 0.4 };
