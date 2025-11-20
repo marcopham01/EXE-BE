@@ -333,4 +333,66 @@ router.get(
  *             schema: { $ref: '#/components/schemas/ErrorResponse' }
  */
 
+router.delete(
+  "/:id",
+  auth.authMiddleWare,
+  auth.requireRole("admin"),
+  user.deleteUserByAdmin
+);
+/**
+ * @openapi
+ * /users/{id}:
+ *   delete:
+ *     tags: [users]
+ *     summary: Admin xóa tài khoản user
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID của user cần xóa
+ *     responses:
+ *       200:
+ *         description: Đã xóa thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: 'Admin đã xóa user thành công' }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     deletedUserId: { type: string }
+ *       400:
+ *         description: Thiếu hoặc sai userId
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       401:
+ *         description: Chưa đăng nhập
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       403:
+ *         description: Không có quyền admin hoặc xóa admin khác
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       404:
+ *         description: Không tìm thấy user
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       500:
+ *         description: Lỗi máy chủ
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ */
+
 module.exports = router;

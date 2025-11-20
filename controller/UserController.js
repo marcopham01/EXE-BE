@@ -3,6 +3,7 @@ var User = require("../model/user");
 const Payment = require("../model/payment");
 var bryctjs = require("bcryptjs");
 var jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 const { cacheGet, cacheSet, cacheDel } = require("../services/redis");
 const crypto = require("crypto");
 const {
@@ -282,6 +283,58 @@ exports.deleteMe = async (req, res) => {
     return res
       .status(500)
       .json({ message: "Lỗi xóa tài khoản", error: e.message, success: false });
+  }
+};
+
+// Admin xóa tài khoản bất kỳ (chỉ cho role customer)
+exports.deleteUserByAdmin = async (req, res) => {
+  try {
+    const targetUserId = req.params?.id;
+    const adminId = req._id?.toString();
+
+    if (!targetUserId) {
+      return res.status(400).json({ success: false, message: "Thiếu userId cần xóa" });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(targetUserId)) {
+      return res.status(400).json({ success: false, message: "userId không hợp lệ" });
+    }
+
+    if (adminId && adminId === targetUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "Không thể tự xóa qua endpoint admin, dùng /users/delete nếu cần",
+      });
+    }
+
+    const user = await User.findById(targetUserId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "Không tìm thấy user" });
+    }
+
+    if (user.role === "admin") {
+      return res.status(403).json({ success: false, message: "Không thể xóa tài khoản admin" });
+    }
+
+    await Payment.deleteMany({ user_id: targetUserId });
+    await User.findByIdAndDelete(targetUserId);
+
+    try {
+      await cacheDel(`users:${targetUserId}`);
+      await cacheDel("users:all");
+    } catch (err) {
+      // bỏ qua lỗi cache
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Admin đã xóa user thành công",
+      data: { deletedUserId: targetUserId },
+    });
+  } catch (error) {
+    return res
+      .status(500)
+      .json({ success: false, message: "Lỗi admin xóa user", error: error.message });
   }
 };
 
