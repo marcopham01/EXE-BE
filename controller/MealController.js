@@ -146,10 +146,22 @@ exports.createMeal = async (req, res) => {
         if (!Array.isArray(ingredients) || ingredients.length === 0) {
             return res.status(400).json({ message: "ingredients must be a non-empty array of ids", error: true, success: false });
         }
+        if (!category) {
+            return res.status(400).json({ message: "category is required", error: true, success: false });
+        }
+        if (!subCategory) {
+            return res.status(400).json({ message: "subCategory is required", error: true, success: false });
+        }
 
         // Helper: convert to ObjectId only for Category/SubCategory
-        const toObjectId = async (value, Model, fieldName) => {
-            if (!value) return null;
+        const toObjectId = async (value, Model, fieldName, options = {}) => {
+            const { required = false } = options;
+            if (!value) {
+                if (required) {
+                    throw new Error(`${fieldName} is required`);
+                }
+                return null;
+            }
             if (mongoose.Types.ObjectId.isValid(value)) return value;
             const doc = await Model.findOne({ name: value }).select("_id").lean();
             if (!doc) {
@@ -160,10 +172,10 @@ exports.createMeal = async (req, res) => {
 
         // Map ingredients -> ObjectId (chấp nhận id hợp lệ hoặc tên)
         const ingredientIds = await Promise.all(
-            ingredients.map((it) => toObjectId(it, Ingredient, "ingredient"))
+            ingredients.map((it) => toObjectId(it, Ingredient, "ingredient", { required: true }))
         );
-        const categoryId = await toObjectId(category, Category, "category");
-        const subCategoryId = await toObjectId(subCategory, SubCategory, "subCategory");
+        const categoryId = await toObjectId(category, Category, "category", { required: true });
+        const subCategoryId = await toObjectId(subCategory, SubCategory, "subCategory", { required: true });
 
         // validate dietType theo enum của schema Meal
         const allowedDietTypes = [
