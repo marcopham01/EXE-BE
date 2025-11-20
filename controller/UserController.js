@@ -284,3 +284,241 @@ exports.deleteMe = async (req, res) => {
       .json({ message: "Lỗi xóa tài khoản", error: e.message, success: false });
   }
 };
+
+// Helper: Tính đầu tuần (Thứ 2) và cuối tuần (Chủ nhật)
+function getWeekRange(date) {
+  const d = new Date(date);
+  const day = d.getDay(); // 0 = Chủ nhật, 1 = Thứ 2, ..., 6 = Thứ 7
+  const diff = day === 0 ? -6 : 1 - day; // Nếu Chủ nhật thì lùi 6 ngày, nếu không thì về Thứ 2
+  
+  const startOfWeek = new Date(d);
+  startOfWeek.setDate(d.getDate() + diff);
+  startOfWeek.setHours(0, 0, 0, 0);
+  
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  endOfWeek.setHours(23, 59, 59, 999);
+  
+  return { startOfWeek, endOfWeek };
+}
+
+// Helper: Format ngày thành DD/MM
+function formatDate(date) {
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `${day}/${month}`;
+}
+
+// Helper: Kiểm tra user có premium active không
+async function isPremiumActive(userId) {
+  const now = new Date();
+  // Ưu tiên Payment còn hạn
+  const paid = await Payment.findOne({ 
+    user_id: userId, 
+    status: "paid", 
+    expiredAt: { $gt: now } 
+  })
+    .sort({ expiredAt: -1 })
+    .lean();
+  if (paid) return true;
+  // Fallback: dựa vào field trên User để test nhanh
+  const u = await User.findById(userId)
+    .select("premiumMembership premiumMembershipExpires")
+    .lean();
+  if (u?.premiumMembership && u?.premiumMembershipExpires && new Date(u.premiumMembershipExpires) > now) {
+    return true;
+  }
+  return false;
+}
+
+// Thống kê user theo free/premium cho biểu đồ
+exports.getUserStats = async (req, res) => {
+  try {
+    const { period = "week" } = req.query;
+    const validPeriods = ["week", "month", "year"];
+    if (!validPeriods.includes(period)) {
+      return res.status(400).json({
+        success: false,
+        message: "period phải là 'week', 'month' hoặc 'year'",
+      });
+    }
+
+    const now = new Date();
+    const mongoose = require("mongoose");
+
+    // Tính toán thời gian bắt đầu dựa trên period
+    let startDate;
+    let dateFormat;
+    let dateGroup;
+
+    if (period === "week") {
+      // 12 tuần gần nhất
+      startDate = new Date(now.getTime() - 12 * 7 * 24 * 60 * 60 * 1000);
+      dateFormat = {
+        year: { $year: "$createdAt" },
+        week: { $week: "$createdAt" },
+      };
+      dateGroup = {
+        $concat: [
+          { $toString: { $year: "$createdAt" } },
+          "-W",
+          { $toString: { $week: "$createdAt" } },
+        ],
+      };
+    } else if (period === "month") {
+      // 12 tháng gần nhất
+      startDate = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+      dateFormat = {
+        year: { $year: "$createdAt" },
+        month: { $month: "$createdAt" },
+      };
+      dateGroup = {
+        $concat: [
+          { $toString: { $year: "$createdAt" } },
+          "-",
+          { $toString: { $month: "$createdAt" } },
+        ],
+      };
+    } else {
+      // 5 năm gần nhất
+      startDate = new Date(now.getFullYear() - 5, 0, 1);
+      dateFormat = { year: { $year: "$createdAt" } };
+      dateGroup = { $toString: { $year: "$createdAt" } };
+    }
+
+    // Lấy tất cả Payment active để xác định premium users
+    const activePayments = await Payment.find({
+      status: "paid",
+      expiredAt: { $gt: now },
+    })
+      .select("user_id")
+      .lean();
+
+    const premiumUserIds = new Set(
+      activePayments.map((p) => p.user_id.toString())
+    );
+
+    // Lấy tất cả user có premiumMembership active
+    const premiumUsersFromField = await User.find({
+      role: "customer",
+      premiumMembership: true,
+      premiumMembershipExpires: { $gt: now },
+    })
+      .select("_id")
+      .lean();
+
+    premiumUsersFromField.forEach((u) => {
+      premiumUserIds.add(u._id.toString());
+    });
+
+    // Thống kê tổng quan (không theo thời gian)
+    const allUsers = await User.find({ role: "customer" }).select("_id").lean();
+    const total = allUsers.length;
+    let premiumCount = 0;
+    for (const user of allUsers) {
+      if (premiumUserIds.has(user._id.toString())) {
+        premiumCount++;
+      }
+    }
+    const freeCount = total - premiumCount;
+    const freePercentage =
+      total > 0 ? Number(((freeCount / total) * 100).toFixed(2)) : 0;
+    const premiumPercentage =
+      total > 0 ? Number(((premiumCount / total) * 100).toFixed(2)) : 0;
+
+    // Thống kê theo thời gian (group theo period)
+    // Lấy tất cả users trong khoảng thời gian
+    const usersInPeriod = await User.find({
+      role: "customer",
+      createdAt: { $gte: startDate },
+    })
+      .select("_id createdAt")
+      .lean();
+
+    // Group users theo period và tính premium/free
+    const periodMap = new Map();
+
+    for (const user of usersInPeriod) {
+      const createdAt = new Date(user.createdAt);
+      let periodKey;
+      let sortKey; // Để sort theo thời gian thực
+
+      if (period === "week") {
+        const { startOfWeek, endOfWeek } = getWeekRange(createdAt);
+        const year = startOfWeek.getFullYear();
+        // Format: "20/11 - 26/11/2025" (khoảng ngày trong tuần)
+        periodKey = `${formatDate(startOfWeek)} - ${formatDate(endOfWeek)}/${year}`;
+        // Sort key: timestamp của đầu tuần
+        sortKey = startOfWeek.getTime();
+      } else if (period === "month") {
+        const year = createdAt.getFullYear();
+        const month = createdAt.getMonth() + 1;
+        // Format: "Tháng 11/2025"
+        periodKey = `Tháng ${month}/${year}`;
+        // Sort key: YYYYMM
+        sortKey = year * 100 + month;
+      } else {
+        const year = createdAt.getFullYear();
+        // Format: "Năm 2025"
+        periodKey = `Năm ${year}`;
+        // Sort key: năm
+        sortKey = year;
+      }
+
+      if (!periodMap.has(periodKey)) {
+        periodMap.set(periodKey, { total: 0, premium: 0, free: 0, sortKey });
+      }
+
+      const stats = periodMap.get(periodKey);
+      stats.total++;
+      
+      if (premiumUserIds.has(user._id.toString())) {
+        stats.premium++;
+      } else {
+        stats.free++;
+      }
+    }
+
+    // Convert map to array và sort theo thời gian thực
+    const chartData = Array.from(periodMap.entries())
+      .map(([period, stats]) => ({
+        period,
+        free: stats.free,
+        premium: stats.premium,
+        total: stats.total,
+        sortKey: stats.sortKey,
+      }))
+      .sort((a, b) => a.sortKey - b.sortKey)
+      .map(({ sortKey, ...rest }) => rest); // Bỏ sortKey khỏi response
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        pieChart: {
+          free: {
+            count: freeCount,
+            percentage: freePercentage,
+          },
+          premium: {
+            count: premiumCount,
+            percentage: premiumPercentage,
+          },
+        },
+        barChart: {
+          free: freeCount,
+          premium: premiumCount,
+        },
+        total: total,
+        timeSeries: chartData,
+        period: period,
+      },
+    });
+  } catch (error) {
+    console.error("Get user stats error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi lấy thống kê user",
+      error: error.message,
+    });
+  }
+};

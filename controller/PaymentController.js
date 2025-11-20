@@ -487,15 +487,205 @@ exports.payOSWebhook = async (req, res) => {
             } catch (_) {}
           }
         } catch (e) {
-          console.warn("markPaidAndUpgrade failed:", e?.message);
+            console.warn("markPaidAndUpgrade failed:", e?.message);
+          }
         }
       }
-    }
 
     // Bắt buộc trả 200 để PayOS coi là nhận thành công
     return res.status(200).json({ success: true, received: true });
   } catch (error) {
     console.error("PayOS webhook error:", error);
     return res.status(500).json({ message: "Lỗi xử lý webhook", error: error.message, success: false });
+  }
+};
+
+// Thống kê doanh thu cho admin
+exports.getRevenueStats = async (req, res) => {
+  try {
+    const { period = "week" } = req.query;
+    const validPeriods = ["week", "month", "year"];
+    if (!validPeriods.includes(period)) {
+      return res.status(400).json({
+        success: false,
+        message: "period phải là 'week', 'month' hoặc 'year'",
+      });
+    }
+
+    const now = new Date();
+    
+    // Tính toán thời gian bắt đầu dựa trên period
+    let startDate;
+
+    if (period === "week") {
+      // 12 tuần gần nhất
+      startDate = new Date(now.getTime() - 12 * 7 * 24 * 60 * 60 * 1000);
+    } else if (period === "month") {
+      // 12 tháng gần nhất
+      startDate = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+    } else {
+      // 5 năm gần nhất
+      startDate = new Date(now.getFullYear() - 5, 0, 1);
+    }
+
+    // Tổng doanh thu (tất cả payment đã thanh toán)
+    const totalRevenueResult = await Payment.aggregate([
+      { $match: { status: "paid" } },
+      { $group: { _id: null, total: { $sum: "$amount" }, count: { $sum: 1 } } },
+    ]);
+    const totalRevenue = totalRevenueResult[0]?.total || 0;
+    const totalTransactions = totalRevenueResult[0]?.count || 0;
+
+    // Thống kê theo thời gian (time series)
+    // Lấy tất cả payments trong khoảng thời gian
+    const paymentsInPeriod = await Payment.find({
+      status: "paid",
+      createdAt: { $gte: startDate },
+    })
+      .select("createdAt amount premium_package_type")
+      .lean();
+
+    // Helper: Tính đầu tuần (Thứ 2) và cuối tuần (Chủ nhật)
+    const getWeekRange = (date) => {
+      const d = new Date(date);
+      const day = d.getDay(); // 0 = Chủ nhật, 1 = Thứ 2, ..., 6 = Thứ 7
+      const diff = day === 0 ? -6 : 1 - day;
+      
+      const startOfWeek = new Date(d);
+      startOfWeek.setDate(d.getDate() + diff);
+      startOfWeek.setHours(0, 0, 0, 0);
+      
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
+      endOfWeek.setHours(23, 59, 59, 999);
+      
+      return { startOfWeek, endOfWeek };
+    };
+
+    // Helper: Format ngày thành DD/MM
+    const formatDate = (date) => {
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      return `${day}/${month}`;
+    };
+
+    // Group payments theo period
+    const periodMap = new Map();
+
+    for (const payment of paymentsInPeriod) {
+      const createdAt = new Date(payment.createdAt);
+      let periodKey;
+      let sortKey;
+
+      if (period === "week") {
+        const { startOfWeek, endOfWeek } = getWeekRange(createdAt);
+        const year = startOfWeek.getFullYear();
+        // Format: "20/11 - 26/11/2025"
+        periodKey = `${formatDate(startOfWeek)} - ${formatDate(endOfWeek)}/${year}`;
+        sortKey = startOfWeek.getTime();
+      } else if (period === "month") {
+        const year = createdAt.getFullYear();
+        const month = createdAt.getMonth() + 1;
+        periodKey = `Tháng ${month}/${year}`;
+        sortKey = year * 100 + month;
+      } else {
+        const year = createdAt.getFullYear();
+        periodKey = `Năm ${year}`;
+        sortKey = year;
+      }
+
+      if (!periodMap.has(periodKey)) {
+        periodMap.set(periodKey, {
+          revenue: 0,
+          transactions: 0,
+          monthly: { revenue: 0, transactions: 0 },
+          trial: { revenue: 0, transactions: 0 },
+          sortKey,
+        });
+      }
+
+      const stats = periodMap.get(periodKey);
+      stats.revenue += payment.amount;
+      stats.transactions++;
+
+      if (payment.premium_package_type === "monthly") {
+        stats.monthly.revenue += payment.amount;
+        stats.monthly.transactions++;
+      } else if (payment.premium_package_type === "trial") {
+        stats.trial.revenue += payment.amount;
+        stats.trial.transactions++;
+      }
+    }
+
+    // Convert map to array và sort theo thời gian thực
+    const chartData = Array.from(periodMap.entries())
+      .map(([period, stats]) => ({
+        period,
+        revenue: Number(stats.revenue.toFixed(2)),
+        transactions: stats.transactions,
+        monthly: {
+          revenue: Number(stats.monthly.revenue.toFixed(2)),
+          transactions: stats.monthly.transactions,
+        },
+        trial: {
+          revenue: Number(stats.trial.revenue.toFixed(2)),
+          transactions: stats.trial.transactions,
+        },
+        sortKey: stats.sortKey,
+      }))
+      .sort((a, b) => a.sortKey - b.sortKey)
+      .map(({ sortKey, ...rest }) => rest); // Bỏ sortKey khỏi response
+
+    // Thống kê theo loại gói (tổng quan)
+    const byPackageResult = await Payment.aggregate([
+      { $match: { status: "paid" } },
+      {
+        $group: {
+          _id: "$premium_package_type",
+          total: { $sum: "$amount" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const monthlyStats = byPackageResult.find((r) => r._id === "monthly") || {
+      _id: "monthly",
+      total: 0,
+      count: 0,
+    };
+    const trialStats = byPackageResult.find((r) => r._id === "trial") || {
+      _id: "trial",
+      total: 0,
+      count: 0,
+    };
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        overview: {
+          totalRevenue: Number(totalRevenue.toFixed(2)),
+          totalTransactions: totalTransactions,
+        },
+        byPackage: {
+          monthly: {
+            revenue: Number(monthlyStats.total.toFixed(2)),
+            transactions: monthlyStats.count,
+          },
+          trial: {
+            revenue: Number(trialStats.total.toFixed(2)),
+            transactions: trialStats.count,
+          },
+        },
+        timeSeries: chartData,
+        period: period,
+      },
+    });
+  } catch (error) {
+    console.error("Get revenue stats error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi lấy thống kê doanh thu",
+      error: error.message,
+    });
   }
 };

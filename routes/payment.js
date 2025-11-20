@@ -202,6 +202,118 @@ router.get(
  *       500:
  *         description: Lỗi máy chủ
  */
-router.post("/webhook", verifyPayOS, payment.payOSWebhook)
+router.post("/webhook", verifyPayOS, payment.payOSWebhook);
+
+// Thống kê doanh thu (chỉ admin)
+/**
+ * @openapi
+ * /payment/revenue:
+ *   get:
+ *     tags: [payment]
+ *     summary: Lấy thống kê doanh thu (chỉ admin)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: period
+ *         schema:
+ *           type: string
+ *           enum: [week, month, year]
+ *           default: week
+ *         description: Chu kỳ thống kê (tuần/tháng/năm)
+ *     responses:
+ *       200:
+ *         description: Thống kê doanh thu
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     overview:
+ *                       type: object
+ *                       properties:
+ *                         totalRevenue: { type: number, example: 5000000 }
+ *                         totalTransactions: { type: integer, example: 150 }
+ *                     byTime:
+ *                       type: object
+ *                       properties:
+ *                         today:
+ *                           type: object
+ *                           properties:
+ *                             revenue: { type: number, example: 100000 }
+ *                             transactions: { type: integer, example: 5 }
+ *                         thisMonth:
+ *                           type: object
+ *                           properties:
+ *                             revenue: { type: number, example: 1500000 }
+ *                             transactions: { type: integer, example: 50 }
+ *                         thisYear:
+ *                           type: object
+ *                           properties:
+ *                             revenue: { type: number, example: 5000000 }
+ *                             transactions: { type: integer, example: 150 }
+ *                     byPackage:
+ *                       type: object
+ *                       properties:
+ *                         monthly:
+ *                           type: object
+ *                           properties:
+ *                             revenue: { type: number, example: 4800000 }
+ *                             transactions: { type: integer, example: 120 }
+ *                         trial:
+ *                           type: object
+ *                           properties:
+ *                             revenue: { type: number, example: 200000 }
+ *                             transactions: { type: integer, example: 30 }
+ *                     timeSeries:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           period: { type: string, example: '2024-W15' }
+ *                           revenue: { type: number, example: 100000 }
+ *                           transactions: { type: integer, example: 5 }
+ *                           monthly:
+ *                             type: object
+ *                             properties:
+ *                               revenue: { type: number, example: 80000 }
+ *                               transactions: { type: integer, example: 4 }
+ *                           trial:
+ *                             type: object
+ *                             properties:
+ *                               revenue: { type: number, example: 20000 }
+ *                               transactions: { type: integer, example: 1 }
+ *                     period: { type: string, example: 'week' }
+ *       400:
+ *         description: Period không hợp lệ
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       401:
+ *         description: Chưa đăng nhập
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       403:
+ *         description: Không có quyền admin
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       500:
+ *         description: Lỗi máy chủ
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ */
+router.get(
+  "/revenue",
+  auth.authMiddleWare,
+  auth.requireRole("admin"),
+  payment.getRevenueStats
+);
 
 module.exports = router;

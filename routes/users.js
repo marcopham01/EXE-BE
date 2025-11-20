@@ -248,4 +248,89 @@ router.delete(
  *             schema: { $ref: '#/components/schemas/ErrorResponse' }
  */
 
+router.get(
+  "/stats",
+  auth.authMiddleWare,
+  auth.requireRole("admin"),
+  user.getUserStats
+);
+/**
+ * @openapi
+ * /users/stats:
+ *   get:
+ *     tags: [users]
+ *     summary: Lấy thống kê user theo free/premium (chỉ admin)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: period
+ *         schema:
+ *           type: string
+ *           enum: [week, month, year]
+ *           default: week
+ *         description: Chu kỳ thống kê (tuần/tháng/năm)
+ *     responses:
+ *       200:
+ *         description: Thống kê user cho biểu đồ
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     pieChart:
+ *                       type: object
+ *                       properties:
+ *                         free:
+ *                           type: object
+ *                           properties:
+ *                             count: { type: integer, example: 150 }
+ *                             percentage: { type: number, example: 75.5 }
+ *                         premium:
+ *                           type: object
+ *                           properties:
+ *                             count: { type: integer, example: 50 }
+ *                             percentage: { type: number, example: 24.5 }
+ *                     barChart:
+ *                       type: object
+ *                       properties:
+ *                         free: { type: integer, example: 150 }
+ *                         premium: { type: integer, example: 50 }
+ *                     total: { type: integer, example: 200 }
+ *                     timeSeries:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           period: { type: string, example: '2024-W15' }
+ *                           free: { type: integer, example: 10 }
+ *                           premium: { type: integer, example: 5 }
+ *                           total: { type: integer, example: 15 }
+ *                     period: { type: string, example: 'week' }
+ *       400:
+ *         description: Period không hợp lệ
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       401:
+ *         description: Chưa đăng nhập
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       403:
+ *         description: Không có quyền admin
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       500:
+ *         description: Lỗi máy chủ
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/ErrorResponse' }
+ */
+
 module.exports = router;
