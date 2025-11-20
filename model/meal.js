@@ -53,6 +53,13 @@ const mealSchema = new schema({
         type: Number,
         required: true,
     },
+    preparationTime: {
+        type: Number,
+        required: false,
+        default: 0,
+        min: 0,
+        comment: "Thời gian chuẩn bị món ăn (tính bằng phút)",
+    },
     tag: {
         type: [String],
         required: true,

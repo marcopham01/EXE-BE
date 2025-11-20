@@ -139,6 +139,7 @@ exports.createMeal = async (req, res) => {
             subCategory, // SubCategory ObjectId string
             dietType, // enum string
             totalKcal,
+            preparationTime, // Thời gian chuẩn bị (phút)
             tag,
             mealTime,
         } = req.body;
@@ -197,6 +198,7 @@ exports.createMeal = async (req, res) => {
             subCategory: subCategoryId,
             dietType,
             totalKcal,
+            preparationTime: preparationTime !== undefined ? Number(preparationTime) : undefined,
             tag,
             mealTime,
         });
@@ -233,6 +235,14 @@ exports.updateMeal = async (req, res) => {
         if (update.category) update.category = await mapMaybe(update.category, Category);
         if (update.subCategory) update.subCategory = await mapMaybe(update.subCategory, SubCategory);
         if (update.totalKcal) update.totalKcal = update.totalKcal;
+        // Validate preparationTime nếu được cung cấp
+        if (update.preparationTime !== undefined) {
+            const prepTime = Number(update.preparationTime);
+            if (isNaN(prepTime) || prepTime < 0) {
+                return res.status(400).json({ message: "preparationTime phải là số >= 0", error: true, success: false });
+            }
+            update.preparationTime = prepTime;
+        }
         // validate dietType nếu client gửi
         if (update.dietType) {
             const allowedDietTypes = [
