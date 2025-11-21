@@ -45,15 +45,22 @@ exports.ingredientsFromImage = async (req, res) => {
         (!user.premiumMembershipExpires || new Date(user.premiumMembershipExpires) > new Date());
 
       if (!isPremium) {
+        // Khởi tạo field cho user cũ nếu chưa có
+        if (user.aiImageUsageCount === undefined) {
+          user.aiImageUsageCount = 0;
+        }
+        if (!user.aiImageUsageLastReset) {
+          user.aiImageUsageLastReset = new Date();
+        }
+
         // Reset count nếu đã qua ngày mới
         const now = new Date();
-        const lastReset = new Date(user.aiImageUsageLastReset || now);
+        const lastReset = new Date(user.aiImageUsageLastReset);
         const isNewDay = now.toDateString() !== lastReset.toDateString();
         
         if (isNewDay) {
           user.aiImageUsageCount = 0;
           user.aiImageUsageLastReset = now;
-          await user.save();
         }
 
         // Kiểm tra số lần đã dùng
@@ -67,7 +74,7 @@ exports.ingredientsFromImage = async (req, res) => {
         }
 
         // Tăng số lần đã dùng
-        user.aiImageUsageCount = (user.aiImageUsageCount || 0) + 1;
+        user.aiImageUsageCount += 1;
         await user.save();
       }
     }
