@@ -32,6 +32,46 @@ function normalizeVi(s) {
 
 exports.ingredientsFromImage = async (req, res) => {
   try {
+    // Kiểm tra giới hạn sử dụng cho user free
+    const requesterId = req._id?.toString();
+    if (requesterId) {
+      const user = await User.findById(requesterId);
+      if (!user) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+
+      // Kiểm tra premium membership
+      const isPremium = user.premiumMembership && 
+        (!user.premiumMembershipExpires || new Date(user.premiumMembershipExpires) > new Date());
+
+      if (!isPremium) {
+        // Reset count nếu đã qua ngày mới
+        const now = new Date();
+        const lastReset = new Date(user.aiImageUsageLastReset || now);
+        const isNewDay = now.toDateString() !== lastReset.toDateString();
+        
+        if (isNewDay) {
+          user.aiImageUsageCount = 0;
+          user.aiImageUsageLastReset = now;
+          await user.save();
+        }
+
+        // Kiểm tra số lần đã dùng
+        const FREE_LIMIT = 3;
+        if (user.aiImageUsageCount >= FREE_LIMIT) {
+          return res.status(403).json({
+            success: false,
+            message: "Bạn đã sử dụng hết lượt miễn phí (3 lần/ngày). Vui lòng nâng cấp Premium để sử dụng không giới hạn.",
+            limitReached: true,
+          });
+        }
+
+        // Tăng số lần đã dùng
+        user.aiImageUsageCount = (user.aiImageUsageCount || 0) + 1;
+        await user.save();
+      }
+    }
+
     const file = req.file;
     const { imageUrl } = req.body;
 
@@ -72,7 +112,6 @@ exports.ingredientsFromImage = async (req, res) => {
       : {};
 
     // BMI filter cho premium
-    const requesterId = req._id?.toString();
     if (requesterId) {
       const user = await User.findById(requesterId).lean();
       if (user?.premiumMembership) {

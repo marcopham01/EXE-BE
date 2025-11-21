@@ -82,6 +82,14 @@ const userSchema = new schema(
       type: String,
       enum: ["monthly"],
     },
+    aiImageUsageCount: {
+      type: Number,
+      default: 0,
+    },
+    aiImageUsageLastReset: {
+      type: Date,
+      default: Date.now,
+    },
   },
   { timestamps: true }
 );
